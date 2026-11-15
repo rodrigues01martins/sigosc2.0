@@ -2,7 +2,7 @@
 
 **Sistema de Gestão de Parcerias com Organizações da Sociedade Civil**
 
-> **Estado atual: DEV-00.5 — inicialização técnica.**
+> **Estado atual: DEV-00.7 — inicialização técnica dos serviços Firebase.**
 > As **100 funcionalidades homologadas** no Inventário Funcional V1.0 **ainda NÃO foram implementadas**.
 > O repositório contém apenas a infraestrutura do frontend e uma página técnica de verificação.
 
@@ -39,7 +39,7 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 │   ├── hooks/            # Hooks React customizados
 │   ├── layouts/          # Estruturas de página (BaseLayout)
 │   ├── pages/            # Páginas (uma pasta por página: Home/)
-│   ├── services/         # Acesso a serviços externos (Firebase) — vazio nesta etapa
+│   ├── services/         # Acesso a serviços externos (firebase/: inicialização do SDK)
 │   ├── styles/           # Estilos globais e variáveis de tema
 │   ├── types/            # Tipos TypeScript compartilhados
 │   ├── utils/            # Funções utilitárias puras
@@ -109,6 +109,23 @@ A função pura `validateEnvironmentConfig` (`src/config/environmentValidation.t
 A validação não acessa a rede e **não comprova conexão real** com o Firebase.
 Variáveis `VITE_` são públicas: nunca usá-las como mecanismo de autorização.
 
+### 5.2 Inicialização dos serviços Firebase (DEV-00.7)
+
+Estrutura em `src/services/firebase/`:
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `initialization.ts` | Lógica pura: bloqueia se a configuração não for "válida", reutiliza o App existente e isola falhas por serviço |
+| `sdk.ts` | Adaptador do SDK modular oficial (`initializeApp`, `getAuth`, `getFirestore`, `getStorage`) |
+| `index.ts` | Ponto único: `getFirebaseServices()` (instâncias) e `getFirebaseDiagnostics()` (somente estados), memoizados |
+
+Distinções importantes:
+
+- **Inicialização do SDK** ≠ **conectividade**: criar instâncias não faz requisições nem prova que os serviços respondem.
+- **Storage**: `getStorage()` não verifica se o bucket existe. Bucket não provisionado só aparece na primeira operação real.
+- **Autenticação** (identificar o usuário) e **autorização** (Security Rules) ainda não foram implementadas.
+- **Multi-Tenant**: o isolamento entre organizações NÃO existe ainda; depende de modelagem e de Security Rules futuras.
+
 ## 6. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
@@ -129,8 +146,8 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | --- | --- |
 | Frontend React + TypeScript + Vite | Inicializado |
 | Página técnica de verificação | Implementada |
-| Firebase SDK | Instalado, **não inicializado** |
-| Autenticação, Multi-Tenant, Firestore, Storage | Não iniciados |
+| Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
+| Login, permissões, Multi-Tenant, leituras/gravações | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

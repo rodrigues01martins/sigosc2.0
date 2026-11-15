@@ -10,7 +10,8 @@ import type { FirebaseOptions } from 'firebase/app'
  * - Estes valores são públicos por natureza (vão para o bundle do navegador).
  *   A proteção dos dados depende EXCLUSIVAMENTE das Security Rules do
  *   Firestore/Storage e da autenticação — não destas variáveis.
- * - Nenhum serviço (Auth, Firestore, Storage) é inicializado nesta etapa (DEV-00.5).
+ * - Os serviços (Auth, Firestore, Storage) são inicializados em `src/services/firebase/`
+ *   somente quando a validação de ambiente (DEV-00.6.2) resulta em "válida" (DEV-00.7).
  * - Nunca usar Firebase Admin SDK ou contas de serviço no frontend.
  */
 const firebaseConfig: FirebaseOptions = {

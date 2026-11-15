@@ -1,3 +1,4 @@
+import { FirebaseServicesSection } from '../../components/FirebaseServicesSection.tsx'
 import { StatusCard } from '../../components/StatusCard.tsx'
 import { APP_INFO } from '../../config/app.ts'
 import { environmentValidation } from '../../config/environment.ts'
@@ -6,6 +7,7 @@ import type {
   ConfigStatus,
   EnvironmentValidationResult,
 } from '../../config/environmentValidation.ts'
+import { getFirebaseDiagnostics } from '../../services/firebase/index.ts'
 import type { StatusItem, StatusLevel } from '../../types/status.ts'
 import styles from './HomePage.module.css'
 
@@ -40,13 +42,13 @@ function buildStatusItems(result: EnvironmentValidationResult): StatusItem[] {
       value: details.length > 0 ? `${config.value} — ${details.join('; ')}` : config.value,
       level: config.level,
     },
-    { label: 'Integração com serviços Firebase', value: 'Não iniciada', level: 'pending' },
   ]
 }
 
 const statusItems = buildStatusItems(environmentValidation)
+const firebaseDiagnostics = getFirebaseDiagnostics()
 
-/** Página técnica de verificação do ambiente (DEV-00.5, atualizada em DEV-00.6.2). */
+/** Página técnica de verificação do ambiente (DEV-00.5, atualizada em DEV-00.6.2 e DEV-00.7). */
 export function HomePage() {
   return (
     <section className={styles.panel} aria-labelledby="page-title">
@@ -67,10 +69,7 @@ export function HomePage() {
         ))}
       </ul>
 
-      <p className={styles.footer}>
-        A validação verifica apenas a coerência das variáveis de ambiente. Não comprova
-        conexão com Firebase; autenticação, banco de dados e armazenamento não estão ativos.
-      </p>
+      <FirebaseServicesSection diagnostics={firebaseDiagnostics} />
 
       <footer className={styles.footer}>
         Versão técnica — {APP_INFO.technicalVersion}

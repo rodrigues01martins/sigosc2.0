@@ -2,5 +2,5 @@
 export const APP_INFO = {
   name: 'SIGOSC 2.0',
   fullName: 'Sistema de Gestão de Parcerias com Organizações da Sociedade Civil',
-  technicalVersion: 'DEV-00.6.2',
+  technicalVersion: 'DEV-00.7',
 } as const

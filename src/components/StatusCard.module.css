@@ -1,5 +1,6 @@
 .card {
   display: flex;
+  min-width: 0;
   gap: 0.75rem;
   align-items: flex-start;
   padding: 1rem;
@@ -26,6 +27,7 @@
 
 .value {
   margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
   font-size: 0.9375rem;
   color: var(--color-muted);
 }
