@@ -1,22 +1,52 @@
 import { StatusCard } from '../../components/StatusCard.tsx'
 import { APP_INFO } from '../../config/app.ts'
-import { isFirebaseConfigured } from '../../config/firebase.ts'
-import type { StatusItem } from '../../types/status.ts'
+import { environmentValidation } from '../../config/environment.ts'
+import type {
+  AppEnvironment,
+  ConfigStatus,
+  EnvironmentValidationResult,
+} from '../../config/environmentValidation.ts'
+import type { StatusItem, StatusLevel } from '../../types/status.ts'
 import styles from './HomePage.module.css'
 
-const statusItems: StatusItem[] = [
-  { label: 'Frontend React + TypeScript', value: 'Inicializado', level: 'ok' },
-  {
-    label: 'Firebase',
-    value: isFirebaseConfigured
-      ? 'Variáveis detectadas — integração ainda não iniciada'
-      : 'Integração pendente de configuração',
-    level: 'pending',
-  },
-  { label: 'Ambiente', value: 'Preparação técnica', level: 'info' },
-]
+const ENVIRONMENT_LABEL: Record<AppEnvironment, string> = {
+  test: 'Testes',
+  production: 'Produção',
+}
 
-/** Página técnica de verificação do ambiente (DEV-00.5). */
+const CONFIG_STATUS: Record<ConfigStatus, { value: string; level: StatusLevel }> = {
+  valid: { value: 'Válida', level: 'ok' },
+  incomplete: { value: 'Incompleta', level: 'pending' },
+  incompatible: { value: 'Incompatível', level: 'error' },
+}
+
+/** Monta os itens exibidos. Nunca expõe valores de chaves ou IDs — apenas nomes de variáveis. */
+function buildStatusItems(result: EnvironmentValidationResult): StatusItem[] {
+  const config = CONFIG_STATUS[result.status]
+  const details: string[] = []
+  if (result.issues.includes('invalid-app-env')) details.push('valor de VITE_APP_ENV não permitido')
+  if (result.issues.includes('project-id-mismatch')) details.push('projeto Firebase diferente do esperado')
+  if (result.missingKeys.length > 0) details.push(`ausentes: ${result.missingKeys.join(', ')}`)
+
+  return [
+    { label: 'Frontend React + TypeScript', value: 'Inicializado', level: 'ok' },
+    {
+      label: 'Ambiente identificado',
+      value: result.environment ? ENVIRONMENT_LABEL[result.environment] : 'Não identificado',
+      level: result.environment ? 'info' : 'pending',
+    },
+    {
+      label: 'Configuração Firebase',
+      value: details.length > 0 ? `${config.value} — ${details.join('; ')}` : config.value,
+      level: config.level,
+    },
+    { label: 'Integração com serviços Firebase', value: 'Não iniciada', level: 'pending' },
+  ]
+}
+
+const statusItems = buildStatusItems(environmentValidation)
+
+/** Página técnica de verificação do ambiente (DEV-00.5, atualizada em DEV-00.6.2). */
 export function HomePage() {
   return (
     <section className={styles.panel} aria-labelledby="page-title">
@@ -37,8 +67,13 @@ export function HomePage() {
         ))}
       </ul>
 
+      <p className={styles.footer}>
+        A validação verifica apenas a coerência das variáveis de ambiente. Não comprova
+        conexão com Firebase; autenticação, banco de dados e armazenamento não estão ativos.
+      </p>
+
       <footer className={styles.footer}>
-        Versão técnica inicial — {APP_INFO.technicalVersion}
+        Versão técnica — {APP_INFO.technicalVersion}
       </footer>
     </section>
   )

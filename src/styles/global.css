@@ -9,6 +9,7 @@
   --color-ok-bg: #f0fdf4;
   --color-pending: #b45309;
   --color-info: #1d4ed8;
+  --color-error: #b91c1c;
   --radius: 0.5rem;
 
   color-scheme: light dark;
@@ -31,6 +32,7 @@
     --color-ok-bg: rgb(74 222 128 / 0.1);
     --color-pending: #fbbf24;
     --color-info: #60a5fa;
+    --color-error: #f87171;
   }
 }
 

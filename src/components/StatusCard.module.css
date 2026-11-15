@@ -44,3 +44,8 @@
   color: var(--color-info);
   border-left-color: var(--color-info);
 }
+
+.error {
+  color: var(--color-error);
+  border-left-color: var(--color-error);
+}

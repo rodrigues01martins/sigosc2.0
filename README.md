@@ -64,6 +64,7 @@ Estilos de componentes usam **CSS Modules** (`*.module.css`), nativos do Vite �
 | `npm run lint` | Verificação estática com ESLint |
 | `npm run build` | Verificação de tipos + build de produção em `dist/` |
 | `npm run preview` | Serve localmente o conteúdo de `dist/` |
+| `npm test` | Testes da validação de ambiente (executor nativo `node:test`) |
 
 ## 5. Configuração futura do Firebase
 
@@ -89,6 +90,24 @@ Regras de segurança:
 - Nunca versionar arquivos `.env*` com valores, chaves privadas ou contas de serviço.
 - Nunca usar o **Firebase Admin SDK** no frontend.
 - Nenhum serviço Firebase (Auth, Firestore, Storage) é inicializado nesta etapa.
+
+### 5.1 Validação de ambiente (DEV-00.6.2)
+
+Duas variáveis adicionais identificam o ambiente:
+
+| Variável | Valor |
+| --- | --- |
+| `VITE_APP_ENV` | `test` (Preview/`develop`) ou `production` (Production/`main`) |
+| `VITE_EXPECTED_FIREBASE_PROJECT_ID` | ID do projeto Firebase esperado para o ambiente |
+
+A função pura `validateEnvironmentConfig` (`src/config/environmentValidation.ts`) classifica a configuração:
+
+- **Válida** — 8 variáveis presentes, ambiente permitido e `VITE_FIREBASE_PROJECT_ID` idêntico ao esperado.
+- **Incompleta** — há variáveis ausentes (vazias ou só com espaços).
+- **Incompatível** — ambiente com valor não permitido ou ID do projeto divergente (prevalece sobre "Incompleta").
+
+A validação não acessa a rede e **não comprova conexão real** com o Firebase.
+Variáveis `VITE_` são públicas: nunca usá-las como mecanismo de autorização.
 
 ## 6. Publicação na Vercel
 
