@@ -1,0 +1,38 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Variáveis de ambiente (nunca versionar)
+.env
+.env.*
+!.env.example
+
+# Credenciais e chaves (nunca versionar)
+*.pem
+*.key
+*serviceAccount*.json
+*service-account*.json
+firebase-adminsdk*.json
+
+# Firebase CLI / Vercel
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+.vercel/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editores e SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.local
