@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// SIGOSC 2.0 — DEV-00.8: política inicial de NEGAÇÃO INTEGRAL (Cloud Storage).
+//
+// - Negados: download e leitura de metadados (read = get), listagem (list),
+//   upload e alteração de metadados (create/update) e exclusão (delete).
+// - Abrange todos os arquivos de qualquer bucket do projeto ({bucket}, {allPaths=**}).
+// - Estar autenticado NÃO concede acesso. Sem leitura pública. Sem regras temporárias.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

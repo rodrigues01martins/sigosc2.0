@@ -36,3 +36,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 *.local
+
+# Firebase Emulator Suite (logs locais e associação de projeto)
+ui-debug.log*
+database-debug.log*
+pubsub-debug.log*
+.firebaserc

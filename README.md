@@ -2,7 +2,7 @@
 
 **Sistema de Gestão de Parcerias com Organizações da Sociedade Civil**
 
-> **Estado atual: DEV-00.7 — inicialização técnica dos serviços Firebase.**
+> **Estado atual: DEV-00.8 — regras iniciais de segurança do Firebase (negação integral).**
 > As **100 funcionalidades homologadas** no Inventário Funcional V1.0 **ainda NÃO foram implementadas**.
 > O repositório contém apenas a infraestrutura do frontend e uma página técnica de verificação.
 
@@ -46,6 +46,10 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 │   ├── App.tsx           # Componente raiz
 │   ├── main.tsx          # Ponto de entrada
 │   └── vite-env.d.ts     # Tipagem das variáveis de ambiente VITE_*
+├── tests/rules/          # Testes das Security Rules (emuladores)
+├── firestore.rules       # Regras do Firestore (negação integral)
+├── storage.rules         # Regras do Storage (negação integral)
+├── firebase.json         # Regras + emuladores (sem projeto associado)
 ├── .env.example          # Nomes das variáveis do Firebase (sem valores)
 ├── eslint.config.js      # Verificação estática
 ├── index.html            # HTML base do Vite
@@ -64,7 +68,8 @@ Estilos de componentes usam **CSS Modules** (`*.module.css`), nativos do Vite �
 | `npm run lint` | Verificação estática com ESLint |
 | `npm run build` | Verificação de tipos + build de produção em `dist/` |
 | `npm run preview` | Serve localmente o conteúdo de `dist/` |
-| `npm test` | Testes da validação de ambiente (executor nativo `node:test`) |
+| `npm test` | Testes unitários (validação de ambiente e inicialização Firebase) |
+| `npm run test:rules` | Testes das Security Rules nos emuladores locais (requer Java 21+) |
 
 ## 5. Configuração futura do Firebase
 
@@ -126,6 +131,41 @@ Distinções importantes:
 - **Autenticação** (identificar o usuário) e **autorização** (Security Rules) ainda não foram implementadas.
 - **Multi-Tenant**: o isolamento entre organizações NÃO existe ainda; depende de modelagem e de Security Rules futuras.
 
+### 5.3 Security Rules (DEV-00.8)
+
+`firestore.rules` e `storage.rules` aplicam **negação integral**: nenhuma leitura, listagem,
+criação, atualização, exclusão, upload, download ou alteração de metadados pelo SDK cliente,
+em qualquer caminho — **inclusive para usuários autenticados**. Regras Multi-Tenant
+(por OSC, parceria ou usuário) serão criadas em evolução futura.
+
+`firebase.json` registra as regras e os emuladores (Firestore e Storage). **Não existe
+`.firebaserc`**: nenhum projeto é associado ao repositório; todo comando exige `--project` explícito.
+
+**Testes (S01–S10):** `npm run test:rules` inicia os emuladores com o projeto fictício
+`demo-sigosc-rules` (prefixo `demo-` impede acesso a projetos reais) e usa contextos de
+autenticação simulados — nenhum usuário real é criado.
+
+#### Publicação das regras no Firebase de TESTES (manual e controlada)
+
+Pré-condições: `npm run test:rules` aprovado; projeto de destino confirmado como o de **testes**.
+**Nunca publicar no projeto de produção nesta etapa.**
+
+Opção A — Console Firebase (sem instalar nada):
+
+1. Abrir o Console Firebase e selecionar o projeto de **testes** (conferir o ID no topo).
+2. *Firestore Database → Regras*: copiar as regras atuais para registro, substituir pelo conteúdo de
+   `firestore.rules` e clicar em **Publicar**.
+3. *Storage → Regras*: idem com `storage.rules`. Se a aba *Storage* pedir "Vamos começar"/"Get started",
+   o bucket **não está provisionado** — não crie agora; registre a situação.
+4. Conferir na aba *Regras* que a versão publicada é a nova (histórico de versões à esquerda).
+
+Opção B — Firebase CLI (projeto sempre explícito):
+
+```bash
+npx firebase login
+npx firebase deploy --only firestore:rules,storage --project ID_DO_PROJETO_DE_TESTES
+```
+
 ## 6. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
@@ -147,6 +187,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Frontend React + TypeScript + Vite | Inicializado |
 | Página técnica de verificação | Implementada |
 | Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
+| Security Rules Firestore/Storage (negação integral) | Criadas e testadas em emulador; publicação no Firebase de testes pendente |
 | Login, permissões, Multi-Tenant, leituras/gravações | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
