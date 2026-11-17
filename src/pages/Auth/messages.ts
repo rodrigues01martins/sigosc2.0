@@ -28,4 +28,4 @@ export const PASSWORD_RESET_CONFIRMATION =
 export const PROVISIONAL_NOTICE = 'Interface técnica provisória — DEV-01.1'
 
 export const SESSION_PROVISIONAL_NOTICE =
-  'Interface técnica provisória para validação da arquitetura — DEV-01.2'
+  'Interface técnica provisória para validação da arquitetura — DEV-01.3'

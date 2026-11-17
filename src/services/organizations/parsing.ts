@@ -3,6 +3,7 @@
  * Documentos fora do formato esperado são DESCARTADOS (falha fechada):
  * um vínculo inconsistente nunca é tratado como autorizado.
  */
+import { sanitizePermissions, type GrantablePermissionId } from '../../domain/authorization.ts'
 import {
   COMMERCIAL_STATUSES,
   MEMBERSHIP_STATUSES,
@@ -29,6 +30,8 @@ export interface ParsedMember {
   readonly oscId: string
   readonly uid: string
   readonly status: MembershipStatus
+  readonly permissions: readonly GrantablePermissionId[]
+  readonly canManagePermissions: boolean
 }
 
 /**
@@ -39,10 +42,17 @@ export function parseMember(doc: RawDocument, expectedUid: string): ParsedMember
   const match = MEMBER_PATH.exec(doc.path)
   if (!match) return null
   const [, oscId, pathUid] = match
-  const { uid, oscId: fieldOscId, status } = doc.data
+  const { uid, oscId: fieldOscId, status, permissions, canManagePermissions } = doc.data
   if (pathUid !== expectedUid || uid !== expectedUid || fieldOscId !== oscId || !oscId) return null
   if (!oneOf(MEMBERSHIP_STATUSES, status)) return null
-  return { oscId, uid: expectedUid, status }
+  // DEV-01.3: campos opcionais. Valores desconhecidos não concedem nada (falha fechada).
+  return {
+    oscId,
+    uid: expectedUid,
+    status,
+    permissions: sanitizePermissions(permissions),
+    canManagePermissions: canManagePermissions === true,
+  }
 }
 
 export function parseOrganization(doc: RawDocument, expectedId: string): OrganizationSummary | null {

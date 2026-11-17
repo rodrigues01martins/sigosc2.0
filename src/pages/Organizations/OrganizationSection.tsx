@@ -3,6 +3,7 @@ import { LoadingState } from '../../components/LoadingState.tsx'
 import { useActiveMembership, useOrganizationActions, useOrganizationState } from '../../hooks/useOrganization.ts'
 import type { Membership } from '../../services/organizations/types.ts'
 import authStyles from '../Auth/AuthPages.module.css'
+import { PermissionsPanel } from '../Permissions/PermissionsPanel.tsx'
 import styles from './OrganizationSection.module.css'
 import {
   COMMERCIAL_LABEL,
@@ -83,6 +84,11 @@ function ReadyContent() {
           <p className={styles.muted}>Nenhuma OSC selecionada. Escolha uma organização abaixo.</p>
         )}
       </div>
+
+      {active?.organization ? (
+        /* DEV-01.3: permissões da OSC ativa; `key` descarta o estado ao trocar de OSC. */
+        <PermissionsPanel key={active.oscId} membership={active} />
+      ) : null}
 
       {state.selectionError ? (
         <p className={authStyles.alert} role="alert">

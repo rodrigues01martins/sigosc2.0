@@ -2,7 +2,7 @@
 
 **Sistema de Gestão de Parcerias com Organizações da Sociedade Civil**
 
-> **Estado atual: DEV-01.2 — estrutura Multi-Tenant inicial: OSCs, vínculos e seleção da OSC ativa.**
+> **Estado atual: DEV-01.3 — permissões individuais, delegação e controle de acesso Multi-Tenant.**
 > As **100 funcionalidades homologadas** no Inventário Funcional V1.0 **ainda NÃO foram implementadas**.
 > O repositório contém a infraestrutura do frontend, a autenticação inicial e páginas técnicas provisórias.
 >
@@ -27,7 +27,8 @@ Lei Federal nº 13.019/2014 (Marco Regulatório das Organizações da Sociedade 
 | Arquivos (futuro) | Firebase Cloud Storage |
 | Testes | `node:test` (lógica), Vitest + Testing Library + jsdom (interface), emuladores Firebase |
 | Verificação estática | ESLint 10 + typescript-eslint (regras `strict`) + regras de React Hooks |
-| Hospedagem | Vercel |
+| Hospedagem | Vercel (site estático + Funções de servidor em `api/`) |
+| Operações privilegiadas | Firebase Admin SDK (somente em `api/`, nunca no navegador) |
 | Versionamento | GitHub |
 
 Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
@@ -37,10 +38,13 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 ```
 .
 ├── public/               # Arquivos estáticos servidos sem processamento (favicon)
+├── api/                  # Funções de servidor da Vercel (DEV-01.3): /api/osc-permissions
+│   └── _lib/             # Lógica do servidor (não exposta como rota)
 ├── src/
 │   ├── assets/           # Imagens, ícones e fontes importados pelo código
 │   ├── components/       # Componentes compartilhados (StatusCard, TechnicalPanel, AuthGate, AuthProvider)
 │   ├── config/           # Configurações centrais (app.ts, firebase.ts)
+│   ├── domain/           # Regras de negócio puras compartilhadas com o servidor (authorization.ts)
 │   ├── hooks/            # Hooks React (useAuthState, useAuthActions)
 │   ├── layouts/          # Estruturas de página (BaseLayout)
 │   ├── pages/            # Páginas (Home/: diagnóstico; Auth/: login e sessão; Organizations/: seleção de OSC)
@@ -53,7 +57,8 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 │   └── vite-env.d.ts     # Tipagem das variáveis de ambiente VITE_*
 ├── tests/rules/          # Testes das Security Rules (emuladores)
 ├── tests/auth/           # Integração do Auth SDK real com o emulador do Auth
-├── tests/support/        # Firebase Auth SDK simulado (testes)
+├── tests/server/         # Operações privilegiadas (Admin SDK) nos emuladores
+├── tests/support/        # SDKs simulados e dados fictícios (testes)
 ├── firestore.rules       # Regras do Firestore (negação por padrão + leituras Multi-Tenant)
 ├── firestore.indexes.json # Índice de grupo de coleções para members.uid
 ├── storage.rules         # Regras do Storage (negação integral)
@@ -80,6 +85,7 @@ Estilos de componentes usam **CSS Modules** (`*.module.css`), nativos do Vite �
 | `npm run test:unit` | Testes de lógica com `node:test` (ambiente, inicialização, autenticação — SDK simulado) |
 | `npm run test:ui` | Testes de interface React com Vitest + jsdom (SDK simulado) |
 | `npm run test:auth` | SDKs reais (Auth + Firestore) contra os emuladores, projeto fictício `demo-sigosc-auth` (requer Java 21+) |
+| `npm run test:server` | Operações privilegiadas (PER) com Admin SDK real nos emuladores, projeto `demo-sigosc-server` |
 | `npm run test:rules` | Testes das Security Rules nos emuladores locais (requer Java 21+) |
 
 ## 5. Configuração futura do Firebase
@@ -383,7 +389,138 @@ Valores devem ser **exatos** (minúsculas, sem espaços): documentos fora do for
 pelo cliente (falha fechada). Os mesmos cenários existem em `tests/support/organizationFixtures.ts`
 para os emuladores.
 
-## 8. Publicação na Vercel
+## 8. Permissões individuais e controle de acesso (DEV-01.3)
+
+### 8.1 Camadas de autorização
+
+| Camada | Fonte autoritativa | Concede |
+| --- | --- | --- |
+| Identidade | Firebase Authentication | **Nada** sozinha |
+| Vínculo ativo | `oscs/{oscId}/members/{uid}.status` | Requisito de qualquer operação na OSC |
+| Administrador único | `oscs/{oscId}.administratorUid` | Gestão de permissões e delegação; **sem** permissões operacionais implícitas |
+| Delegação | `members/{uid}.canManagePermissions` | Conceder/revogar permissões operacionais de terceiros |
+| Permissões operacionais | `members/{uid}.permissions` | Capacidades nos módulos (alcance: toda a OSC) |
+| Situação comercial | `oscs/{oscId}.commercialStatus` | `suspended` bloqueia alterações e operação |
+
+O avaliador único fica em `src/domain/authorization.ts` (sem dependências): a interface o usa só para
+decidir o que **exibir**; o servidor o aplica com dados lidos **na hora** do Firestore. `specialRole`
+continua sendo apenas espelho — nunca concede autoridade.
+
+### 8.2 Extensão do vínculo (compatível com a DEV-01.2)
+
+| Campo novo | Tipo | Finalidade |
+| --- | --- | --- |
+| `permissions` | array de IDs do catálogo | Permissões operacionais individuais |
+| `canManagePermissions` | boolean | Delegação (só `true` concede) |
+| `permissionsUpdatedAt` / `permissionsUpdatedBy` | timestamp / uid | Autoria da última alteração de permissões |
+| `delegationUpdatedAt` / `delegationUpdatedBy` | timestamp / uid | Autoria da última alteração de delegação |
+
+Auditoria imutável: `oscs/{oscId}/permissionEvents/{id}` (ação, permissão, solicitante e sua autoridade,
+alvo, antes/depois, data), gravada na **mesma transação** da alteração; ilegível e não gravável pelo cliente.
+
+Documentos legados (sem os campos) continuam válidos e resultam em **nenhuma** permissão. Valores
+desconhecidos, textos livres ou tipos errados são descartados (falha fechada). Não há migração.
+
+### 8.3 Catálogo inicial
+
+IDs estáveis `modulo.capacidade`. Não existem IDs genéricos (`admin`, `all`, `*`).
+
+| Módulo | Concedível agora | Pendente de especificação (não concedível) |
+| --- | --- | --- |
+| Gestão de usuários e permissões | — (gestão é competência do administrador/delegado) | `users.invite` |
+| Gestão de parcerias | `partnerships.view` | `partnerships.edit` |
+| Plano de Trabalho | `work-plan.view` | `work-plan.edit` |
+| Execução e Monitoramento | `execution.view` | `execution.edit` |
+| Gestão Financeira | `financial.view` | `financial.edit` |
+| Gestão Documental | `documents.view` | `documents.edit` |
+| Prestação de Contas | `accountability.view` | `accountability.edit` |
+
+**Atenção:** o Inventário Funcional V1.0 não está no repositório. As capacidades de **consulta**
+foram as únicas consideradas de semântica segura; todas as demais aguardam especificação a partir
+do Inventário antes de se tornarem concedíveis. O catálogo não concede nada automaticamente.
+
+### 8.4 Competências
+
+- **Administrador** (com vínculo ativo, OSC ativa): consulta a relação de usuários; concede/revoga
+  permissões e delegação de **outros** membros; exporta a relação (CSV).
+- **Delegado**: consulta a relação e concede/revoga permissões operacionais de **outros** membros, exceto
+  do administrador. Não concede/revoga delegação (sem subdelegação), não altera a si mesmo nem o administrador.
+- **Ninguém** altera as próprias permissões ou delegação. Concessões exigem alvo com vínculo ativo;
+  revogações também valem para vínculos inativos (redução de privilégios).
+- **Suspensão comercial**: bloqueia todas as alterações (inclusive do administrador) e a operação;
+  o administrador mantém **somente** consulta e exportação; delegados e operadores ficam bloqueados.
+- Exclusivos da administração da plataforma (sem rota): designar/substituir administrador, ativar OSC,
+  alterar situação comercial, criar vínculos.
+
+### 8.5 Operações privilegiadas (servidor)
+
+**Escolha:** Funções de servidor da **Vercel** (`api/osc-permissions.ts`), na mesma plataforma já
+aprovada. Firebase Cloud Functions exigiriam o plano Blaze; não há segunda plataforma de backend.
+
+| Requisição | Operação |
+| --- | --- |
+| `GET /api/osc-permissions?oscId=…` | P02 — relação de usuários e permissões |
+| `POST` `{oscId, targetUid, action, permission?}` | P03–P06 (`grant-permission`, `revoke-permission`, `grant-delegation`, `revoke-delegation`) |
+
+Cada requisição: token de ID verificado com `checkRevoked` → parâmetros validados por formato estrito
+(campos extras recusados) → OSC, vínculo do solicitante e do alvo **relidos** dentro de uma **transação**
+→ decisão do avaliador → escrita + auditoria atômicas. Respostas: 200, 400, 401, 403/404 (com motivo),
+405, 503 (não configurado), 500 (sem detalhes). Sem CORS (mesma origem), `Cache-Control: no-store`.
+
+### 8.6 Security Rules (DEV-01.3)
+
+**Nenhuma nova exceção.** O dono continua lendo o próprio vínculo (agora com `permissions` e
+`canManagePermissions`); vínculos de terceiros, auditoria e qualquer escrita continuam negados.
+Foram acrescentadas as funções `canOperate(oscId)` e `hasPermission(oscId, permissao)`, ainda sem uso,
+para as regras dos módulos futuros (validadas por teste de sonda). Storage inalterado.
+
+### 8.7 Implantação no Firebase/Vercel de TESTES (manual)
+
+**Situação:** nada foi publicado. O push para `develop` gera um Preview que **inclui a função**, porém
+**inerte** (responde 503) até a etapa 3. A interface mostra "indisponível" — nunca sucesso simulado.
+
+1. **Regras:** as regras da DEV-01.3 mudaram apenas comentários e funções ainda sem uso. Publicar
+   `firestore.rules` no projeto de **testes** (mesmo procedimento da seção 7.6) para mantê-las alinhadas.
+2. **Conta de serviço dedicada (Google Cloud Console → IAM → Contas de serviço)** no projeto de **testes**:
+   criar `sigosc-permissions-preview` com os papéis mínimos **Cloud Datastore User**
+   (`roles/datastore.user`) e **Firebase Authentication Viewer** (`roles/firebaseauth.viewer`);
+   gerar uma chave JSON. **Não** usar a conta padrão `firebase-adminsdk` (privilégios amplos).
+   Nunca enviar a chave por chat, e-mail ou commit.
+3. **Vercel → Settings → Environment Variables**, marcando **apenas Preview** (e, se possível, "Sensitive"):
+   `SIGOSC_SERVER_ENV=test`, `SIGOSC_FIREBASE_PROJECT_ID`, `SIGOSC_FIREBASE_CLIENT_EMAIL`,
+   `SIGOSC_FIREBASE_PRIVATE_KEY` (valor `private_key` do JSON). Depois, apagar o arquivo JSON local.
+   **Não** configurar em Production: sem `SIGOSC_SERVER_ENV=test` a API permanece desativada.
+4. Gerar novo deploy de Preview (redeploy) para carregar as variáveis.
+5. Validar com as contas de teste (seção 8.8).
+
+Revogação/rotação: desativar a chave na conta de serviço e remover as variáveis da Vercel.
+Evolução recomendada: federação de identidade (OIDC Vercel → Google Cloud) para eliminar chaves longas.
+
+### 8.8 Dados de teste (aditivo e reversível)
+
+Os documentos da DEV-01.2 **não precisam de alteração** (sem campos → sem permissões). Para validar a
+gestão, `osc-teste-alfa` precisa de outros membros além do administrador. Procedimento opcional:
+
+1. *Authentication*: criar as contas `UID_DELEGADO` e `UID_OPERADOR` (novas; não reutilizar SINGLE/NONE,
+   para não alterar os cenários homologados).
+2. *Firestore*: criar `oscs/osc-teste-alfa/members/UID_DELEGADO` e `.../UID_OPERADOR` com `uid`, `oscId`
+   (`osc-teste-alfa`), `status` (`active`), `specialRole` (*null*), datas e autores (como na seção 7.7).
+   Opcional: `canManagePermissions: true` no delegado (ou concedê-la pela interface, como administrador).
+3. Para testar a suspensão (PER-14/15) **temporariamente**: anotar o valor atual e alterar
+   `oscs/osc-teste-alfa.commercialStatus` para `suspended`; ao final, **restaurar** `active`.
+4. **Reversão:** excluir os dois documentos de vínculo e as contas criadas; para remover permissões
+   gravadas nos vínculos existentes, excluir os campos `permissions`, `canManagePermissions`,
+   `permissionsUpdated*`, `delegationUpdated*`; a subcoleção `permissionEvents` pode ser mantida
+   (histórico) ou excluída.
+
+### 8.9 Decisões a confirmar (aplicadas de forma conservadora)
+
+- Quem concede permissões operacionais ao administrador? Hoje ninguém pelo sistema: o próprio
+  administrador não (proibição de autoalteração) e o delegado não (proteção do administrador).
+- Situação cadastral diferente de `active` bloqueia toda a gestão, inclusive consulta.
+- Granularidade das permissões por módulo (consulta × edição × aprovação) depende do Inventário V1.0.
+
+## 9. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
 2. A Vercel detecta o preset **Vite** automaticamente:
@@ -397,7 +534,7 @@ para os emuladores.
 e o preset Vite da Vercel já define build e diretório de saída. Quando um roteador SPA for adotado,
 será necessário adicionar uma regra de *rewrite* para `index.html`.
 
-## 9. Estado atual
+## 10. Estado atual
 
 | Item | Situação |
 | --- | --- |
@@ -408,7 +545,8 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Autenticação (login, recuperação de senha, logout, sessão local) | Implementada (DEV-01.1) — interface técnica provisória |
 | OSCs, vínculos, administrador único (modelo), seleção da OSC ativa | Implementado (DEV-01.2) — interface técnica provisória |
 | Regras Multi-Tenant de leitura | Implementadas e testadas em emulador; **publicação no Firebase de testes pendente** |
-| Permissões individuais, convites, cadastro administrativo de OSCs, gravações | Não iniciados |
+| Permissões individuais, delegação, suspensão comercial (DEV-01.3) | Implementado e testado em emuladores; **operações de servidor não configuradas** no Preview |
+| Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

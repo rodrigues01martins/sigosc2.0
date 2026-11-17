@@ -17,10 +17,12 @@
     "test:unit": "node --test \"src/**/*.test.ts\"",
     "test:ui": "vitest run",
     "test:rules": "firebase emulators:exec --only firestore,storage --project demo-sigosc-rules \"node --test --test-concurrency=1 tests/rules/*.test.ts\"",
-    "test:auth": "firebase emulators:exec --only auth,firestore --project demo-sigosc-auth \"node --test --test-concurrency=1 tests/auth/*.test.ts\""
+    "test:auth": "firebase emulators:exec --only auth,firestore --project demo-sigosc-auth \"node --test --test-concurrency=1 tests/auth/*.test.ts\"",
+    "test:server": "firebase emulators:exec --only auth,firestore --project demo-sigosc-server \"node --test --test-concurrency=1 tests/server/*.test.ts\""
   },
   "dependencies": {
     "firebase": "^13.3.0",
+    "firebase-admin": "^14.5.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

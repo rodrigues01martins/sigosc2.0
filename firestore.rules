@@ -3,6 +3,10 @@ rules_version = '2';
 // SIGOSC 2.0 — Security Rules do Cloud Firestore.
 //
 // DEV-00.8: política de NEGAÇÃO INTEGRAL por padrão (mantida).
+// DEV-01.3: SEM novas exceções. Permissões e delegação ficam no próprio vínculo
+//   (lido pelo dono pela regra abaixo). Concessão, revogação e delegação ocorrem
+//   SOMENTE pelo servidor (/api/osc-permissions, Admin SDK) — nenhuma escrita pelo cliente.
+//   A relação de usuários da OSC é fornecida pelo servidor, não por estas regras.
 // DEV-01.2: exceções MÍNIMAS de LEITURA para a estrutura Multi-Tenant:
 //   oscs/{oscId}                → lida somente por membro com vínculo ATIVO.
 //   oscs/{oscId}/members/{uid}  → cada usuário lê apenas o PRÓPRIO vínculo (ativo ou inativo).
@@ -32,6 +36,26 @@ service cloud.firestore {
         && get(ownMemberPath(oscId)).data.status == 'active'
         && get(ownMemberPath(oscId)).data.uid == request.auth.uid
         && get(ownMemberPath(oscId)).data.oscId == oscId;
+    }
+
+    // --- Preparação para os módulos futuros (DEV-01.3) -----------------------------
+    // Ainda NÃO usadas por nenhum caminho. Regras de parcerias, financeiro etc. deverão
+    // usar hasPermission(oscId, '<modulo>.<capacidade>'), que exige: vínculo ativo,
+    // OSC ativa, situação comercial NÃO suspensa e a permissão individual concedida.
+    // O administrador NÃO tem permissões operacionais implícitas.
+    function oscData(oscId) {
+      return get(/databases/$(database)/documents/oscs/$(oscId)).data;
+    }
+
+    function canOperate(oscId) {
+      return isActiveMember(oscId)
+        && oscData(oscId).registrationStatus == 'active'
+        && oscData(oscId).commercialStatus != 'suspended';
+    }
+
+    function hasPermission(oscId, permission) {
+      return canOperate(oscId)
+        && get(ownMemberPath(oscId)).data.get('permissions', []).hasAny([permission]);
     }
 
     // Negação por padrão (DEV-00.8).

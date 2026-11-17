@@ -74,6 +74,8 @@ export function createOrganizationService<TDb>(db: TDb | null, sdk: Organization
     return {
       oscId: member.oscId,
       status: member.status,
+      permissions: member.permissions,
+      canManagePermissions: member.canManagePermissions,
       organization,
       isAdministrator: member.status === 'active' && organization?.administratorUid === member.uid,
       selectable: reason === null,

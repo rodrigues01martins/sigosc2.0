@@ -1,3 +1,5 @@
+import type { GrantablePermissionId } from '../../domain/authorization.ts'
+
 /**
  * Tipos da estrutura Multi-Tenant (DEV-01.2).
  *
@@ -40,6 +42,10 @@ export type UnselectableReason =
 export interface Membership {
   readonly oscId: string
   readonly status: MembershipStatus
+  /** DEV-01.3: permissões operacionais individuais nesta OSC (saneadas; legado → []). */
+  readonly permissions: readonly GrantablePermissionId[]
+  /** DEV-01.3: delegação para gerir permissões (concedida só pelo administrador; legado → false). */
+  readonly canManagePermissions: boolean
   /** Somente para vínculos ATIVOS cuja OSC pôde ser lida; caso contrário `null`. */
   readonly organization: OrganizationSummary | null
   /** Derivado EXCLUSIVAMENTE de `oscs/{oscId}.administratorUid` (fonte autoritativa). */
