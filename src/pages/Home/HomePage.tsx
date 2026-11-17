@@ -1,20 +1,14 @@
+import type { ReactNode } from 'react'
 import { FirebaseServicesSection } from '../../components/FirebaseServicesSection.tsx'
 import { StatusCard } from '../../components/StatusCard.tsx'
+import { TechnicalPanel } from '../../components/TechnicalPanel.tsx'
 import { APP_INFO } from '../../config/app.ts'
 import { environmentValidation } from '../../config/environment.ts'
-import type {
-  AppEnvironment,
-  ConfigStatus,
-  EnvironmentValidationResult,
-} from '../../config/environmentValidation.ts'
+import { ENVIRONMENT_LABEL } from '../../config/environmentLabels.ts'
+import type { ConfigStatus, EnvironmentValidationResult } from '../../config/environmentValidation.ts'
 import { getFirebaseDiagnostics } from '../../services/firebase/index.ts'
 import type { StatusItem, StatusLevel } from '../../types/status.ts'
 import styles from './HomePage.module.css'
-
-const ENVIRONMENT_LABEL: Record<AppEnvironment, string> = {
-  test: 'Testes',
-  production: 'Produção',
-}
 
 const CONFIG_STATUS: Record<ConfigStatus, { value: string; level: StatusLevel }> = {
   valid: { value: 'Válida', level: 'ok' },
@@ -48,20 +42,27 @@ function buildStatusItems(result: EnvironmentValidationResult): StatusItem[] {
 const statusItems = buildStatusItems(environmentValidation)
 const firebaseDiagnostics = getFirebaseDiagnostics()
 
-/** Página técnica de verificação do ambiente (DEV-00.5, atualizada em DEV-00.6.2 e DEV-00.7). */
-export function HomePage() {
-  return (
-    <section className={styles.panel} aria-labelledby="page-title">
-      <header className={styles.header}>
-        <h1 id="page-title" className={styles.title}>
-          {APP_INFO.name}
-        </h1>
-        <p className={styles.subtitle}>{APP_INFO.fullName}</p>
-      </header>
+interface HomePageProps {
+  /** Aviso exibido no lugar da mensagem de sucesso (ex.: autenticação indisponível). */
+  notice?: ReactNode
+}
 
-      <p className={styles.message} role="status">
-        Ambiente técnico inicializado com sucesso.
-      </p>
+/**
+ * Página técnica de diagnóstico do ambiente (DEV-00.5, atualizada em DEV-00.6.2 e DEV-00.7).
+ * Desde a DEV-01.1, é exibida quando a configuração impede a autenticação.
+ */
+export function HomePage({ notice }: HomePageProps) {
+  return (
+    <TechnicalPanel titleId="page-title" footer={<>Versão técnica — {APP_INFO.technicalVersion}</>}>
+      {notice ? (
+        <p className={styles.alert} role="alert">
+          {notice}
+        </p>
+      ) : (
+        <p className={styles.message} role="status">
+          Ambiente técnico inicializado com sucesso.
+        </p>
+      )}
 
       <ul className={styles.list}>
         {statusItems.map((item) => (
@@ -70,10 +71,6 @@ export function HomePage() {
       </ul>
 
       <FirebaseServicesSection diagnostics={firebaseDiagnostics} />
-
-      <footer className={styles.footer}>
-        Versão técnica — {APP_INFO.technicalVersion}
-      </footer>
-    </section>
+    </TechnicalPanel>
   )
 }

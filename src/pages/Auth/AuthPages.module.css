@@ -1,0 +1,158 @@
+.intro {
+  margin: 1.75rem 0 1.25rem;
+  text-align: center;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--color-text);
+}
+
+.heading:focus {
+  outline: none;
+}
+
+.lead {
+  margin: 0.25rem 0 0;
+  color: var(--color-muted);
+}
+
+.form {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.input {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.input:focus-visible,
+.button:focus-visible,
+.linkButton:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.fieldError {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-error);
+}
+
+.alert,
+.notice,
+.success {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  border-left: 4px solid currentColor;
+  font-weight: 600;
+}
+
+.alert {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+}
+
+.notice {
+  background: var(--color-pending-bg);
+  color: var(--color-pending);
+}
+
+.success {
+  background: var(--color-ok-bg);
+  color: var(--color-ok);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-primary-strong);
+  color: var(--color-on-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.secondaryButton {
+  composes: button;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.linkButton {
+  justify-self: center;
+  min-height: 2.75rem;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  background: none;
+  color: var(--color-info);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.details {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+}
+
+.details > div {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.details dt {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-muted);
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
