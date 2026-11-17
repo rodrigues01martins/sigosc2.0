@@ -22,6 +22,8 @@ export function createFakePermissionsServer(organizations: OrganizationFacts[], 
   const truth = new Map(Object.entries(members).map(([oscId, list]) => [oscId, new Map(list.map((m) => [m.uid, { ...m }]))]))
   const calls: string[] = []
   let failure: PermissionsApiError | null = null
+  /** Quando definido, as alterações aguardam `release()` (testes de "processando"). */
+  let gate: Promise<void> | null = null
 
   const facts = (oscId: string, uid: string) => truth.get(oscId)?.get(uid) ?? null
 
@@ -56,6 +58,7 @@ export function createFakePermissionsServer(organizations: OrganizationFacts[], 
       },
       async mutate(request) {
         calls.push(`${request.action}:${request.targetUid}:${request.permission ?? ''}`)
+        if (gate) await gate
         if (failure) return { ok: false, error: failure }
         const uid = actorUid()
         const organization = orgs.get(request.oscId) ?? null
@@ -72,7 +75,10 @@ export function createFakePermissionsServer(organizations: OrganizationFacts[], 
         if (request.action === 'revoke-permission') stored.permissions = stored.permissions.filter((p) => p !== request.permission)
         if (request.action === 'grant-delegation') stored.canManagePermissions = true
         if (request.action === 'revoke-delegation') stored.canManagePermissions = false
-        return { ok: true, data: { changed: true } }
+        return {
+          ok: true,
+          data: { changed: true, member: { uid: stored.uid, permissions: [...stored.permissions], canManagePermissions: stored.canManagePermissions } },
+        }
       },
     }
   }
@@ -83,5 +89,10 @@ export function createFakePermissionsServer(organizations: OrganizationFacts[], 
     truth,
     orgs,
     fail: (error: PermissionsApiError | null) => { failure = error },
+    hold() {
+      let release!: () => void
+      gate = new Promise<void>((resolve) => { release = resolve })
+      return () => { gate = null; release() }
+    },
   }
 }

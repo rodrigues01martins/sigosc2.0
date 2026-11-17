@@ -30,6 +30,7 @@
   "include": [
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
   ]
 }

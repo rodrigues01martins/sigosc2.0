@@ -1,0 +1,334 @@
+/* Matriz de usuários e permissões (UX-001) — tokens do DS-05. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ds-space-4);
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.searchInput {
+  min-height: var(--ds-size-control);
+  padding: 0 12px;
+  border: 1px solid var(--ds-border-control);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-bg-surface);
+  color: var(--ds-fg-default);
+  font: inherit;
+}
+
+.searchInput:focus-visible,
+.toggle:focus-visible,
+.delegation:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.scroll {
+  /* Contém também os textos para leitor de tela (absolutos) dentro da rolagem. */
+  position: relative;
+  overflow-x: auto;
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.matrix {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.matrix th,
+.matrix td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ds-border-subtle);
+  background: var(--ds-bg-surface);
+  vertical-align: middle;
+}
+
+.matrix thead th {
+  background: var(--ds-neutral-50);
+  color: var(--ds-fg-muted);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: center;
+  vertical-align: bottom;
+}
+
+.matrix thead th.left {
+  text-align: left;
+}
+
+.module {
+  display: block;
+  font-weight: 400;
+}
+
+.permission {
+  display: block;
+  margin-top: 2px;
+  color: var(--ds-fg-default);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* Primeira coluna fixa durante a rolagem horizontal */
+.sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 240px;
+  max-width: 280px;
+  box-shadow: 1px 0 0 var(--ds-border-subtle);
+  text-align: left;
+}
+
+.userName {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.role {
+  font-weight: 600;
+  color: var(--ds-fg-default);
+  white-space: nowrap;
+}
+
+.userMeta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-muted);
+}
+
+.cell {
+  text-align: center;
+  min-width: 140px;
+}
+
+.delegationCol {
+  min-width: 180px;
+  border-left: 2px solid var(--ds-border-subtle);
+  text-align: center;
+}
+
+.inactiveRow td,
+.inactiveRow th {
+  background: var(--ds-neutral-50);
+}
+
+/* Célula: botão de alternância (estado em texto + ícone, não só cor) */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 128px;
+  min-height: var(--ds-size-control);
+  padding: 0 10px;
+  white-space: nowrap;
+  border-radius: var(--ds-radius-sm);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.granted {
+  composes: toggle;
+  border: 1px solid var(--ds-green-700);
+  background: var(--ds-green-100);
+  color: var(--ds-green-700);
+}
+
+.notGranted {
+  composes: toggle;
+  border: 1px dashed var(--ds-neutral-500);
+  background: var(--ds-neutral-0);
+  color: var(--ds-neutral-600);
+}
+
+.granted:hover:not(:disabled),
+.notGranted:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--ds-primary-700);
+}
+
+.processing {
+  composes: toggle;
+  border: 1px solid var(--ds-primary-700);
+  background: var(--ds-blue-200);
+  color: var(--ds-primary-900);
+  cursor: progress;
+}
+
+.blocked {
+  white-space: nowrap;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 128px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.blockedState {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.blockedGranted {
+  color: var(--ds-green-700);
+}
+
+.blockedNot {
+  color: var(--ds-neutral-600);
+}
+
+.blockedReason {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--ds-fg-muted);
+}
+
+.failed {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--ds-feedback-error-fg);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ds-primary-200);
+  border-top-color: var(--ds-primary-900);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.delegation {
+  composes: toggle;
+  border: 1px solid var(--ds-primary-700);
+  background: var(--ds-neutral-0);
+  color: var(--ds-primary-700);
+}
+
+.delegation:hover:not(:disabled) {
+  background: var(--ds-blue-200);
+}
+
+.delegationState {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-muted);
+}
+
+/* Celular: cartões por usuário */
+.cards {
+  position: relative;
+  display: grid;
+  gap: var(--ds-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4);
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-bg-surface);
+}
+
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cardGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cardGroupTitle {
+  padding: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--ds-fg-muted);
+}
+
+.cardRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  padding-top: var(--ds-space-2);
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.cardRow .toggle,
+.cardRow .granted,
+.cardRow .notGranted,
+.cardRow .processing,
+.cardRow .delegation {
+  min-height: var(--ds-size-target-min);
+}

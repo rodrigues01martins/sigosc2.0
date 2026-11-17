@@ -48,9 +48,22 @@ export type ApiResult<T> =
   | { readonly ok: true; readonly data: T }
   | { readonly ok: false; readonly error: PermissionsApiError; readonly reason?: DenialReason }
 
+/** Estado do vínculo confirmado pelo servidor após a operação (UX-001). */
+export interface ConfirmedMemberState {
+  readonly uid: string
+  readonly permissions: readonly GrantablePermissionId[]
+  readonly canManagePermissions: boolean
+}
+
+export interface MutationResult {
+  readonly changed: boolean
+  /** `null` quando a resposta não trouxe o estado do MESMO usuário solicitado. */
+  readonly member: ConfirmedMemberState | null
+}
+
 export interface PermissionsApi {
   listMembers(oscId: string): Promise<ApiResult<MemberDirectory>>
-  mutate(request: MutationRequest): Promise<ApiResult<{ changed: boolean }>>
+  mutate(request: MutationRequest): Promise<ApiResult<MutationResult>>
 }
 
 interface Dependencies {
@@ -156,7 +169,12 @@ export function createPermissionsApi({ fetch, getIdToken, endpoint = '/api/osc-p
         : { oscId: request.oscId, targetUid: request.targetUid, action: request.action }
       const result = await call({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!result.ok) return result
-      return { ok: true, data: { changed: result.body.changed === true } }
+      const raw = result.body.member as Record<string, unknown> | undefined
+      const member =
+        raw && typeof raw === 'object' && raw.uid === request.targetUid && Array.isArray(raw.permissions)
+          ? { uid: request.targetUid, permissions: sanitizePermissions(raw.permissions), canManagePermissions: raw.canManagePermissions === true }
+          : null
+      return { ok: true, data: { changed: result.body.changed === true, member } }
     },
   }
 }

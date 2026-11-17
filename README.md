@@ -564,9 +564,9 @@ O tema "Aprendiz do Futuro" anexado ao canvas pertence a outro produto e **não*
   administrador único pela fonte autoritativa, vínculo do usuário), permissões do usuário e ações.
 - **PAG-OSC02**: estrutura visual com **estado indisponível**; pesquisa e "Cadastrar parceria"
   desabilitados e identificados como aguardando implementação. Nenhuma parceria, coleção ou simulação.
-- **PAG-OSC03**: tabela de usuários, painel "Ações autorizadas", fluxo em 3 passos com confirmação em
-  linha (DSC-FBK-02), conceder/revogar permissão e delegação **via servidor**, exportação CSV,
-  suspensão comercial (somente consulta para o administrador; bloqueio para os demais, DSC-FBK-06/07).
+- **PAG-OSC03**: matriz de usuários × permissões (UX-001, seção 9.6), delegação **via servidor** com
+  confirmação, exportação CSV, suspensão comercial (somente consulta para o administrador; bloqueio
+  para os demais, DSC-FBK-06/07).
 - Estados: carregando, erro de consulta (com nova tentativa), sem vínculo, vínculo inativo/OSC
   indisponível, escolha de OSC, suspensão, sessão encerrada.
 
@@ -594,6 +594,7 @@ altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do D
 | Sair e identificação do usuário | Avatar e "Usuário da OSC" | E-mail, avatar e botão "Sair" | Logout obrigatório (DEV-01.1) |
 | Rodapé da sidebar | "Estrutura ilustrativa" | Ambiente e versão técnica | Identificação do ambiente (DEV-01.1) |
 | Tabela | Grade de `div` | `<table>` semântica | Acessibilidade (AF-01-22) |
+| Fluxo de alteração de permissão (OSC03) | Painel "Ações autorizadas" + 3 passos | Matriz com um clique por célula (UX-001) | Simplificação solicitada na UX-001 |
 | Larguras intermediária/estreita (P08) | Não aplicadas | Quebra natural do flex, como no protótipo | P08 permanece hipótese pendente (L4/L5/L10) |
 
 ### 9.5 Pendências para homologação
@@ -604,6 +605,25 @@ altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do D
   decisão e nova evolução (não alterado nesta etapa).
 - Decidir a exibição do nome do administrador único para não administradores.
 - Lacunas abertas do DS-05 (tokens destrutivos L11, layout P08, confirmação PD-01-D06).
+
+### 9.6 Matriz de usuários e permissões (UX-001)
+
+- **Estrutura:** linhas = usuários (nome, competência, situação do vínculo); colunas = permissões do
+  **catálogo vigente** (6), agrupadas pelo módulo; coluna "Delegação" visível apenas ao administrador.
+- **Um clique** concede ou revoga a permissão operacional, sem confirmação. A ação decorre do estado
+  atual da célula, e a célula só muda após resposta positiva do servidor (estado confirmado devolvido
+  pela API `/api/osc-permissions`, que não foi alterada).
+- **Delegação** continua separada e exige confirmação explícita (usuário, OSC, competência e consequência).
+- **Estados da célula:** concedida, não concedida, processando, bloqueada (sem autorização, próprio
+  usuário, administrador, vínculo inativo) e bloqueada por suspensão; falha preserva o estado e
+  permite nova tentativa.
+- **Concorrência:** requisições duplicadas bloqueadas por célula; respostas obsoletas descartadas ao
+  trocar de OSC ou sair; negação do servidor recarrega os dados da fonte confiável.
+- **Responsividade:** tabela com primeira coluna fixa e rolagem horizontal a partir de 720 px;
+  cartões por usuário abaixo disso (verificado em 320, 375, 768 e 1440 px).
+- **Acessibilidade:** botões com `aria-pressed` e nome acessível "permissão — usuário: estado";
+  foco mantido durante o processamento; anúncios em `role="status"`/`role="alert"`; sem violações
+  no axe-core (WCAG 2.2 AA).
 
 ## 10. Publicação na Vercel
 
@@ -625,7 +645,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | --- | --- |
 | Frontend React + TypeScript + Vite | Inicializado |
 | Página técnica de verificação | Implementada (exibida quando a configuração é inválida) |
-| Interface de alta fidelidade PAG-OSC01 a 03 | Integrada (DEV-01.4); PAG-OSC02 apenas estrutura visual |
+| Interface de alta fidelidade PAG-OSC01 a 03 | Integrada (DEV-01.4); PAG-OSC02 apenas estrutura visual; PAG-OSC03 em matriz (UX-001) |
 | Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
 | Security Rules Firestore/Storage (negação integral) | Criadas e testadas em emulador; publicação no Firebase de testes pendente |
 | Autenticação (login, recuperação de senha, logout, sessão local) | Implementada (DEV-01.1) — interface técnica provisória |
