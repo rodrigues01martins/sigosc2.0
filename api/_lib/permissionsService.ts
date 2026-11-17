@@ -23,6 +23,7 @@ import {
   type Operation,
   type OrganizationFacts,
 } from '../../src/domain/authorization.ts'
+import { MAX_BODY_BYTES } from './limits.ts'
 
 export interface ServerDeps {
   readonly db: Firestore
@@ -45,7 +46,6 @@ export interface ApiResponse {
 }
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
-export const MAX_BODY_BYTES = 10_000
 
 const MUTATIONS = ['grant-permission', 'revoke-permission', 'grant-delegation', 'revoke-delegation'] as const
 type MutationAction = (typeof MUTATIONS)[number]

@@ -31,7 +31,7 @@ Lei Federal nº 13.019/2014 (Marco Regulatório das Organizações da Sociedade 
 | Operações privilegiadas | Firebase Admin SDK (somente em `api/`, nunca no navegador) |
 | Versionamento | GitHub |
 
-Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
+Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines`; a Vercel usa a mesma versão principal no build e nas funções). Compatível com Vite 8 (`^20.19 || >=22.12`) e Firebase Admin SDK 14 (`>=22`).
 
 ## 3. Organização de diretórios
 
@@ -466,6 +466,22 @@ Cada requisição: token de ID verificado com `checkRevoked` → parâmetros val
 (campos extras recusados) → OSC, vínculo do solicitante e do alvo **relidos** dentro de uma **transação**
 → decisão do avaliador → escrita + auditoria atômicas. Respostas: 200, 400, 401, 403/404 (com motivo),
 405, 503 (não configurado), 500 (sem detalhes). Sem CORS (mesma origem), `Cache-Control: no-store`.
+
+#### Compatibilidade ESM/CommonJS do servidor (DEV-01.3-FIX01)
+
+Cadeia: `firebase-admin@14` (CommonJS) → `jwks-rsa@4` (CommonJS) → `require('jose')`, e o `jose@6` é
+**somente ESM**. Isso depende do recurso `require(esm)` do Node; sem ele, a função falhava com
+`ERR_REQUIRE_ESM` antes de responder (observado no Preview).
+
+Correção (`api/_lib/esmInterop.ts`): antes de carregar o Admin SDK, o servidor importa o `jose`
+como ESM a partir do **mesmo arquivo** que o `jwks-rsa` resolve e o registra no `require.cache`
+(mecanismo documentado do Node). O Admin SDK passa a ser carregado **sob demanda**, sempre depois
+dessa preparação. Versões, `node_modules` e a verificação de tokens permanecem inalterados.
+
+Além disso, `engines.node` passou de `>=22.12.0` (que fazia a Vercel adotar automaticamente a
+versão principal mais nova) para `24.x`, evitando trocas inesperadas de runtime.
+
+Regressão: `tests/server/esmCompat.test.ts` executa a função num Node **sem** `require(esm)`.
 
 ### 8.6 Security Rules (DEV-01.3)
 
