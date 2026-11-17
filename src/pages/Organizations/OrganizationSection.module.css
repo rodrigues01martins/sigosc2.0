@@ -1,0 +1,137 @@
+.section {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--color-text);
+}
+
+.active {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius);
+}
+
+.activeName {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+}
+
+.itemSelectable {
+  border-left-color: var(--color-ok);
+}
+
+.itemBlocked {
+  border-left-color: var(--color-pending);
+}
+
+.itemCurrent {
+  border-color: var(--color-primary);
+  border-left-color: var(--color-primary);
+}
+
+.name {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.badgeOk {
+  composes: badge;
+  color: var(--color-ok);
+}
+
+.badgeBlocked {
+  composes: badge;
+  color: var(--color-pending);
+}
+
+.badgeAdmin {
+  composes: badge;
+  color: var(--color-info);
+}
+
+.details {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--color-muted);
+}
+
+.details div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.details dt {
+  font-weight: 600;
+}
+
+.details dd {
+  margin: 0;
+}
+
+.reason {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--color-pending);
+}
+
+.current {
+  margin: 0;
+  font-weight: 700;
+  color: var(--color-primary);
+}

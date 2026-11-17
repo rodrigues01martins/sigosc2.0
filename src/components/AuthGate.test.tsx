@@ -10,8 +10,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeAuthSdk, firebaseError, TEST_ACCOUNT, type FakeAuthOptions } from '../../tests/support/fakeAuthSdk.ts'
 import { createAuthService } from '../services/auth/authService.ts'
 import { createAuthStore } from '../services/auth/authStore.ts'
+import { createOrganizationService } from '../services/organizations/organizationService.ts'
+import { createOrganizationStore } from '../services/organizations/organizationStore.ts'
+import { createMemorySelectionStorage } from '../services/organizations/selectionStorage.ts'
+import { createFakeOrganizationsSdk } from '../../tests/support/fakeOrganizationsSdk.ts'
 import { AuthGate } from './AuthGate.tsx'
 import { AuthProvider } from './AuthProvider.tsx'
+import { OrganizationProvider } from './OrganizationProvider.tsx'
 
 afterEach(cleanup)
 
@@ -19,9 +24,18 @@ function renderApp(options: FakeAuthOptions = { accounts: [TEST_ACCOUNT] }, { av
   const fake = createFakeAuthSdk(options)
   const service = createAuthService(available ? fake.auth : null, fake.sdk)
   const store = createAuthStore(service)
+  // DEV-01.2: a página autenticada exige o contexto organizacional (Firestore simulado).
+  const fakeDb = createFakeOrganizationsSdk()
+  const organizationStore = createOrganizationStore({
+    authStore: store,
+    service: createOrganizationService(available ? fakeDb.db : null, fakeDb.sdk),
+    selectionStorage: createMemorySelectionStorage(),
+  })
   const tree = (
     <AuthProvider value={{ store, service }}>
-      <AuthGate environment="test" />
+      <OrganizationProvider store={organizationStore}>
+        <AuthGate environment="test" />
+      </OrganizationProvider>
     </AuthProvider>
   )
   const view = render(strict ? <StrictMode>{tree}</StrictMode> : tree)
@@ -82,7 +96,8 @@ describe('A01/A06 — login e página técnica protegida', () => {
     expect(await screen.findByText('Autenticação concluída.')).toBeTruthy()
     expect(screen.getByText(TEST_ACCOUNT.email)).toBeTruthy()
     expect(screen.getByText('Testes')).toBeTruthy()
-    expect(screen.getByText(/O acesso às OSCs ainda não foi implementado/)).toBeTruthy()
+    // DEV-01.2: texto atualizado — o acesso às OSCs agora depende de vínculo ativo.
+    expect(screen.getByText(/não concede acesso a organizações, parcerias/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Sair' })).toBeTruthy()
     expect(screen.queryByLabelText('Senha')).toBeNull()
     expect(document.body.textContent).not.toContain(TEST_ACCOUNT.password)

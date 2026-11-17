@@ -1,16 +1,60 @@
 rules_version = '2';
 
-// SIGOSC 2.0 — DEV-00.8: política inicial de NEGAÇÃO INTEGRAL (Cloud Firestore).
+// SIGOSC 2.0 — Security Rules do Cloud Firestore.
 //
-// - Nenhum acesso pelo SDK cliente: leitura (get/list), criação, atualização e exclusão negadas.
-// - Abrange todos os documentos, em qualquer profundidade ({document=**}).
-// - Estar autenticado NÃO concede acesso. Não há regras temporárias abertas.
-// - Regras por OSC, parceria ou usuário (Multi-Tenant) serão definidas em evolução futura.
-// - O Admin SDK (servidor) ignora estas regras; ele não é usado no frontend.
+// DEV-00.8: política de NEGAÇÃO INTEGRAL por padrão (mantida).
+// DEV-01.2: exceções MÍNIMAS de LEITURA para a estrutura Multi-Tenant:
+//   oscs/{oscId}                → lida somente por membro com vínculo ATIVO.
+//   oscs/{oscId}/members/{uid}  → cada usuário lê apenas o PRÓPRIO vínculo (ativo ou inativo).
+//
+// Princípios:
+// - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo
+//   em oscs/{oscId}/members/{request.auth.uid}. Custom claims NÃO são consideradas.
+// - Nenhuma escrita pelo SDK cliente: OSCs, vínculos e administradores são mantidos
+//   apenas por operações administrativas confiáveis (Admin SDK no servidor, que ignora estas regras).
+// - Sem leitura global de OSCs e sem leitura de vínculos de terceiros.
+// - Qualquer caminho não listado continua negado.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownMemberPath(oscId) {
+      return /databases/$(database)/documents/oscs/$(oscId)/members/$(request.auth.uid);
+    }
+
+    // Vínculo ativo e consistente (uid e oscId do documento coincidem com o caminho).
+    function isActiveMember(oscId) {
+      return signedIn()
+        && exists(ownMemberPath(oscId))
+        && get(ownMemberPath(oscId)).data.status == 'active'
+        && get(ownMemberPath(oscId)).data.uid == request.auth.uid
+        && get(ownMemberPath(oscId)).data.oscId == oscId;
+    }
+
+    // Negação por padrão (DEV-00.8).
     match /{document=**} {
       allow read, write: if false;
+    }
+
+    match /oscs/{oscId} {
+      // Dados institucionais mínimos: somente leitura individual (get), nunca listagem.
+      allow get: if isActiveMember(oscId);
+
+      match /members/{memberUid} {
+        // O próprio vínculo, ativo ou inativo (necessário para exibir a situação).
+        allow get: if signedIn() && memberUid == request.auth.uid;
+      }
+    }
+
+    // Consulta dos vínculos do usuário por grupo de coleções:
+    //   collectionGroup('members').where('uid', '==', request.auth.uid)
+    // A regra só autoriza consultas cujo filtro garante que TODOS os resultados
+    // pertencem ao solicitante. O nome de subcoleção "members" é reservado a vínculos.
+    match /{path=**}/members/{memberUid} {
+      allow list: if signedIn() && resource.data.uid == request.auth.uid;
     }
   }
 }

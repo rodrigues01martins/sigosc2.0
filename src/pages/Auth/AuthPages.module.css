@@ -156,3 +156,7 @@
   display: grid;
   gap: 1rem;
 }
+
+.spaced {
+  margin-top: 1.5rem;
+}

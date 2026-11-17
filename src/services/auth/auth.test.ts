@@ -259,7 +259,9 @@ test('A12 — fluxo de autenticação não executa operações no Firestore ou S
   for (const file of sourceFiles().filter((f) => /services\/auth|pages\/Auth|AuthGate|AuthProvider|hooks\//.test(f))) {
     assert.doesNotMatch(code(file), /firebase\/(firestore|storage)|\.firestore\b|\.storage\b/, relative(SRC_ROOT, file))
   }
-  // Nenhuma operação de dados em toda a aplicação.
+  // Nenhuma operação de escrita, tempo real ou Storage em toda a aplicação. Desde a DEV-01.2,
+  // as únicas LEITURAS permitidas (getDocFromServer/getDocsFromServer) ficam restritas ao
+  // adaptador `services/organizations/sdk.ts` — verificado em `organizations.test.ts`.
   const dataOps =
     /\b(getDoc|getDocs|setDoc|addDoc|updateDoc|deleteDoc|onSnapshot|collection|runTransaction|writeBatch|uploadBytes|uploadBytesResumable|uploadString|getDownloadURL|getBytes|deleteObject|listAll|getMetadata|updateMetadata)\s*\(/
   for (const file of sourceFiles()) {

@@ -1,9 +1,10 @@
 import { useId, useState } from 'react'
 import { TechnicalPanel } from '../../components/TechnicalPanel.tsx'
 import { useAuthActions } from '../../hooks/useAuth.ts'
+import { OrganizationSection } from '../Organizations/OrganizationSection.tsx'
 import type { AuthUser } from '../../services/auth/types.ts'
 import styles from './AuthPages.module.css'
-import { PROVISIONAL_NOTICE, SIGN_OUT_ERROR_MESSAGE } from './messages.ts'
+import { SESSION_PROVISIONAL_NOTICE, SIGN_OUT_ERROR_MESSAGE } from './messages.ts'
 
 interface AuthenticatedPageProps {
   user: AuthUser
@@ -11,8 +12,8 @@ interface AuthenticatedPageProps {
 }
 
 /**
- * Página técnica temporária de sessão autenticada (DEV-01.1).
- * Estar autenticado NÃO concede permissões: nenhum dado é acessado aqui.
+ * Página técnica temporária de sessão autenticada (DEV-01.1), com a seleção da OSC
+ * ativa (DEV-01.2). Estar autenticado NÃO concede permissões.
  */
 export function AuthenticatedPage({ user, environmentLabel }: AuthenticatedPageProps) {
   const { signOut } = useAuthActions()
@@ -33,7 +34,7 @@ export function AuthenticatedPage({ user, environmentLabel }: AuthenticatedPageP
   }
 
   return (
-    <TechnicalPanel titleId={`${id}-title`} footer={PROVISIONAL_NOTICE}>
+    <TechnicalPanel titleId={`${id}-title`} footer={SESSION_PROVISIONAL_NOTICE}>
       <div className={styles.intro}>
         <p className={styles.success} role="status">
           Autenticação concluída.
@@ -51,10 +52,12 @@ export function AuthenticatedPage({ user, environmentLabel }: AuthenticatedPageP
         </div>
       </dl>
 
-      <div className={styles.stack}>
+      <OrganizationSection />
+
+      <div className={`${styles.stack} ${styles.spaced}`}>
         <p className={styles.notice}>
-          O acesso às OSCs ainda não foi implementado. A autenticação identifica o usuário,
-          mas não concede permissão de acesso a organizações, parcerias ou dados.
+          A autenticação identifica o usuário, mas não concede acesso a organizações, parcerias
+          ou dados. Cada OSC só é acessível com vínculo ativo, verificado pelas regras de segurança.
         </p>
 
         {error ? (

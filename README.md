@@ -2,12 +2,13 @@
 
 **Sistema de Gestão de Parcerias com Organizações da Sociedade Civil**
 
-> **Estado atual: DEV-01.1 — autenticação inicial com Firebase Authentication (e-mail e senha).**
+> **Estado atual: DEV-01.2 — estrutura Multi-Tenant inicial: OSCs, vínculos e seleção da OSC ativa.**
 > As **100 funcionalidades homologadas** no Inventário Funcional V1.0 **ainda NÃO foram implementadas**.
 > O repositório contém a infraestrutura do frontend, a autenticação inicial e páginas técnicas provisórias.
 >
 > ⚠️ **Autenticação ≠ autorização.** Estar autenticado apenas IDENTIFICA o usuário. Não concede acesso
-> a OSCs, parcerias ou dados: as Security Rules continuam em negação integral.
+> a OSCs, parcerias ou dados. Desde a DEV-01.2, só há LEITURA da própria OSC por membros com
+> vínculo ativo; todo o restante continua em negação integral.
 
 ## 1. Finalidade
 
@@ -42,8 +43,8 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 │   ├── config/           # Configurações centrais (app.ts, firebase.ts)
 │   ├── hooks/            # Hooks React (useAuthState, useAuthActions)
 │   ├── layouts/          # Estruturas de página (BaseLayout)
-│   ├── pages/            # Páginas (Home/: diagnóstico; Auth/: login, recuperação, sessão)
-│   ├── services/         # Serviços externos (firebase/: inicialização; auth/: autenticação)
+│   ├── pages/            # Páginas (Home/: diagnóstico; Auth/: login e sessão; Organizations/: seleção de OSC)
+│   ├── services/         # Serviços (firebase/: inicialização; auth/: autenticação; organizations/: vínculos)
 │   ├── styles/           # Estilos globais e variáveis de tema
 │   ├── types/            # Tipos TypeScript compartilhados
 │   ├── utils/            # Funções utilitárias puras (validation.ts)
@@ -53,7 +54,8 @@ Requisito de execução: Node.js `>= 22.12` (exigido pelo Vite 8).
 ├── tests/rules/          # Testes das Security Rules (emuladores)
 ├── tests/auth/           # Integração do Auth SDK real com o emulador do Auth
 ├── tests/support/        # Firebase Auth SDK simulado (testes)
-├── firestore.rules       # Regras do Firestore (negação integral)
+├── firestore.rules       # Regras do Firestore (negação por padrão + leituras Multi-Tenant)
+├── firestore.indexes.json # Índice de grupo de coleções para members.uid
 ├── storage.rules         # Regras do Storage (negação integral)
 ├── firebase.json         # Regras + emuladores (sem projeto associado)
 ├── .env.example          # Nomes das variáveis do Firebase (sem valores)
@@ -77,7 +79,7 @@ Estilos de componentes usam **CSS Modules** (`*.module.css`), nativos do Vite �
 | `npm test` | Executa `test:unit` e `test:ui` |
 | `npm run test:unit` | Testes de lógica com `node:test` (ambiente, inicialização, autenticação — SDK simulado) |
 | `npm run test:ui` | Testes de interface React com Vitest + jsdom (SDK simulado) |
-| `npm run test:auth` | Auth SDK real contra o emulador do Auth, projeto fictício `demo-sigosc-auth` (requer Java 21+) |
+| `npm run test:auth` | SDKs reais (Auth + Firestore) contra os emuladores, projeto fictício `demo-sigosc-auth` (requer Java 21+) |
 | `npm run test:rules` | Testes das Security Rules nos emuladores locais (requer Java 21+) |
 
 ## 5. Configuração futura do Firebase
@@ -144,8 +146,8 @@ Distinções importantes:
 
 `firestore.rules` e `storage.rules` aplicam **negação integral**: nenhuma leitura, listagem,
 criação, atualização, exclusão, upload, download ou alteração de metadados pelo SDK cliente,
-em qualquer caminho — **inclusive para usuários autenticados**. Regras Multi-Tenant
-(por OSC, parceria ou usuário) serão criadas em evolução futura.
+em qualquer caminho — **inclusive para usuários autenticados**. A DEV-01.2 acrescentou somente exceções de LEITURA
+para a estrutura Multi-Tenant (ver seção 7.5); a negação por padrão continua valendo.
 
 `firebase.json` registra as regras e os emuladores (Firestore e Storage). **Não existe
 `.firebaserc`**: nenhum projeto é associado ao repositório; todo comando exige `--project` explícito.
@@ -237,7 +239,151 @@ Componentes usam apenas `useAuthState()` e `useAuthActions()`; nenhum chama o SD
 5. *Authentication → Templates → Password reset*: revisar idioma (português) e remetente.
 6. *Authentication → Users → Add user*: criar manualmente as contas de teste.
 
-## 7. Publicação na Vercel
+## 7. Estrutura Multi-Tenant (DEV-01.2)
+
+### 7.1 Modelo de coleções
+
+```
+oscs/{oscId}                     ← OSC (dados institucionais mínimos)
+oscs/{oscId}/members/{uid}       ← vínculo AUTORITATIVO (ID do documento = UID do Auth)
+```
+
+**`oscs/{oscId}`**
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | string | Igual ao ID do documento |
+| `name` | string | Nome institucional |
+| `registrationStatus` | `pending` \| `active` \| `suspended` \| `inactive` | Situação cadastral/ativação |
+| `commercialStatus` | `pending` \| `active` \| `suspended` \| `cancelled` | Situação comercial (independente das parcerias) |
+| `administratorUid` | string \| null | **Fonte autoritativa** do administrador único |
+| `createdAt`, `updatedAt` | timestamp | Datas |
+| `createdBy`, `updatedBy` | string | UID do operador administrativo (rastreabilidade) |
+
+**`oscs/{oscId}/members/{uid}`**
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `uid` | string | Igual ao ID do documento |
+| `oscId` | string | Igual ao ID da OSC pai |
+| `status` | `active` \| `inactive` | Situação do vínculo |
+| `specialRole` | `administrator` \| null | **Espelho não autoritativo** de `administratorUid` (auditoria/consulta) |
+| `createdAt`, `updatedAt`, `createdBy`, `updatedBy` | | Datas e autores |
+
+Justificativa: o vínculo fica **dentro da OSC** (a organização é dona dos seus membros), o ID do
+documento = UID impede vínculos duplicados na mesma OSC, e as regras consultam o caminho exato
+`oscs/{oscId}/members/{request.auth.uid}` sem consultas adicionais. Nenhum modelo de parcerias,
+financeiro, documentos ou prestação de contas foi criado.
+
+### 7.2 Vínculos e administrador único
+
+- Vínculos são **independentes por OSC**: inativar o vínculo em uma OSC não afeta as demais (teste MT09).
+- **Desvinculação = `status: 'inactive'`**, sem excluir o documento: registros históricos preservam a
+  identificação dos autores (UIDs continuam resolvíveis).
+- **Administrador único**: `oscs/{oscId}.administratorUid` é um campo escalar → no máximo um por OSC
+  por construção. O cliente considera administrador **somente** quem é `administratorUid` E tem vínculo ativo;
+  o espelho `specialRole` nunca concede a função.
+- Designação/substituição/revogação: futuras operações administrativas confiáveis (servidor, Admin SDK),
+  em **transação** que atualize `administratorUid` e os espelhos `specialRole` juntos. Não implementadas.
+- Nenhuma escrita pelo cliente: o usuário não cria vínculos nem se torna administrador (MT07, MT08).
+
+### 7.3 Estratégia de consulta das OSCs do usuário
+
+As Security Rules **não filtram** resultados: uma consulta só é aceita se a regra provar que
+**todos** os documentos possíveis são autorizados. Alternativas avaliadas:
+
+| Alternativa | Decisão |
+| --- | --- |
+| Índice `users/{uid}/memberships/{oscId}` | **Não adotado**: duplica vínculos (segunda fonte), exige escrita atômica dupla e cria risco de divergência |
+| IDs das OSCs em *custom claims* | **Não adotado**: exige Admin SDK, limite de 1000 bytes e revogação atrasada até a renovação do token (até 1 h) |
+| `collectionGroup('members').where('uid','==',uid)` | **Adotado**: fonte única e autoritativa; a regra `resource.data.uid == request.auth.uid` torna a consulta provável |
+
+Fluxo: (1) consulta dos próprios vínculos; (2) `get` individual de `oscs/{oscId}` **apenas** para
+vínculos ativos. Vínculos inativos não consultam a OSC (a interface mostra só o identificador).
+Todas as leituras usam `getDocFromServer`/`getDocsFromServer` (nunca cache).
+
+**Requisito do projeto real:** a consulta por grupo de coleções exige o índice de campo único
+`members.uid` com escopo *collection group* (`firestore.indexes.json`). Sem ele, o Firestore
+retorna `failed-precondition` e a interface informa "consulta não configurada".
+
+### 7.4 Contexto da OSC ativa
+
+`src/services/organizations/organizationStore.ts` (consumido por `OrganizationProvider` e
+`useOrganizationState`/`useOrganizationActions`/`useActiveMembership`):
+
+| Estado | Significado |
+| --- | --- |
+| `signed-out` | Sem sessão: contexto vazio |
+| `loading` | Consultando vínculos |
+| `ready` | `memberships`, `activeOscId`, `pendingOscId` (troca em validação), `selectionError` |
+| `error` | `permission-denied`, `network`, `not-configured` ou `unknown` (com "Tentar novamente") |
+| `unavailable` | Configuração Firebase inválida |
+
+Comportamentos U01–U07: seleção automática com uma OSC; escolha entre várias; orientação sem vínculo;
+inativos/OSC não ativada não selecionáveis; troca revalida o vínculo no servidor e remonta a área da OSC;
+logout remove contexto e seleção guardada; sessão restaurada só reutiliza a OSC guardada se o vínculo,
+consultado novamente, continuar válido. O navegador guarda **apenas o ID** da OSC selecionada
+(`localStorage`, chave `sigosc:active-osc:{uid}`) — nunca usado como autorização.
+
+### 7.5 Security Rules (DEV-01.2)
+
+| Caminho | Permitido | Condição |
+| --- | --- | --- |
+| `oscs/{oscId}` | `get` | vínculo próprio com `status == 'active'`, `uid` e `oscId` consistentes |
+| `oscs/{oscId}/members/{uid}` | `get` | `uid == request.auth.uid` (ativo ou inativo) |
+| `{**}/members/{uid}` | `list` | consulta filtrada por `uid == request.auth.uid` |
+| Todo o resto | — | **negado** (inclusive qualquer escrita e a listagem de `oscs`) |
+
+O Storage **não foi alterado** (negação integral).
+
+### 7.6 Publicação das regras e do índice no Firebase de TESTES (manual)
+
+Pré-condição: `npm run test:rules` e `npm run test:auth` aprovados. **Nunca publicar em produção.**
+
+1. Console Firebase → selecionar o projeto de **testes** (conferir o ID).
+2. *Firestore Database → Regras*: copiar as regras atuais (registro), colar `firestore.rules`, **Publicar**.
+3. *Firestore Database → Índices → Campo único → Adicionar isenção*: coleção `members`, campo `uid`,
+   escopo **Grupo de coleções**, ordem crescente **ativada**. Aguardar o status "Ativado".
+4. Alternativa por CLI (projeto sempre explícito):
+   `npx firebase deploy --only firestore:rules,firestore:indexes --project ID_DO_PROJETO_DE_TESTES`
+
+Até a publicação, a interface no Preview mostrará "acesso negado pelas regras de segurança" — comportamento
+esperado e seguro (as regras antigas negam tudo).
+
+### 7.7 Provisionamento de OSCs fictícias no Firebase de TESTES (manual, administrativo)
+
+A criação de OSCs e vínculos é privilegiada e **não existe no frontend**. Sem credenciais no repositório,
+o procedimento é feito no Console (o Console grava com privilégio administrativo e ignora as regras):
+
+1. *Authentication → Users*: criar (ou reutilizar) 3 contas de teste e anotar os **UIDs**:
+   `UID_MULTI` (duas OSCs), `UID_SINGLE` (uma OSC), `UID_NONE` (sem vínculo — não criar documentos).
+2. *Firestore Database → Dados → Iniciar coleção* `oscs`, criando os documentos (ID = valor de `id`):
+
+| ID | name | registrationStatus | commercialStatus | administratorUid |
+| --- | --- | --- | --- | --- |
+| `osc-teste-alfa` | OSC Fictícia Alfa (TESTE) | `active` | `active` | `UID_MULTI` |
+| `osc-teste-beta` | OSC Fictícia Beta (TESTE) | `active` | `suspended` | *null* |
+| `osc-teste-gama` | OSC Fictícia Gama (TESTE) | `active` | `active` | `UID_SINGLE` |
+
+   Em cada documento incluir também `id` (string), `createdAt`/`updatedAt` (timestamp) e
+   `createdBy`/`updatedBy` (string, ex.: `provisionamento-manual-teste`).
+3. Em cada OSC, criar a subcoleção `members` com documentos cujo **ID é o UID**:
+
+| OSC | ID do documento | uid | oscId | status | specialRole |
+| --- | --- | --- | --- | --- | --- |
+| `osc-teste-alfa` | `UID_MULTI` | `UID_MULTI` | `osc-teste-alfa` | `active` | `administrator` |
+| `osc-teste-beta` | `UID_MULTI` | `UID_MULTI` | `osc-teste-beta` | `active` | *null* |
+| `osc-teste-gama` | `UID_MULTI` | `UID_MULTI` | `osc-teste-gama` | `inactive` | *null* |
+| `osc-teste-gama` | `UID_SINGLE` | `UID_SINGLE` | `osc-teste-gama` | `active` | `administrator` |
+
+4. Validar no Preview: `UID_MULTI` vê Alfa e Beta selecionáveis e Gama inativa (sem nome);
+   `UID_SINGLE` entra com Gama selecionada; `UID_NONE` vê a orientação sem vínculo.
+
+Valores devem ser **exatos** (minúsculas, sem espaços): documentos fora do formato são descartados
+pelo cliente (falha fechada). Os mesmos cenários existem em `tests/support/organizationFixtures.ts`
+para os emuladores.
+
+## 8. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
 2. A Vercel detecta o preset **Vite** automaticamente:
@@ -251,7 +397,7 @@ Componentes usam apenas `useAuthState()` e `useAuthActions()`; nenhum chama o SD
 e o preset Vite da Vercel já define build e diretório de saída. Quando um roteador SPA for adotado,
 será necessário adicionar uma regra de *rewrite* para `index.html`.
 
-## 8. Estado atual
+## 9. Estado atual
 
 | Item | Situação |
 | --- | --- |
@@ -260,7 +406,9 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
 | Security Rules Firestore/Storage (negação integral) | Criadas e testadas em emulador; publicação no Firebase de testes pendente |
 | Autenticação (login, recuperação de senha, logout, sessão local) | Implementada (DEV-01.1) — interface técnica provisória |
-| Autorização, vínculos com OSCs, permissões, Multi-Tenant, leituras/gravações | Não iniciados |
+| OSCs, vínculos, administrador único (modelo), seleção da OSC ativa | Implementado (DEV-01.2) — interface técnica provisória |
+| Regras Multi-Tenant de leitura | Implementadas e testadas em emulador; **publicação no Firebase de testes pendente** |
+| Permissões individuais, convites, cadastro administrativo de OSCs, gravações | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.
