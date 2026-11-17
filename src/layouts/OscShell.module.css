@@ -1,0 +1,229 @@
+/* Estrutura da Gestão da OSC — conforme HF-G05 (DSC-NAV-01 a 06). */
+.shell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-4);
+  align-items: stretch;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--ds-space-4);
+  background: var(--ds-bg-page);
+  color: var(--ds-fg-default);
+}
+
+.sidebar {
+  flex: 0 0 var(--ds-size-sidebar);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-4);
+  padding: 20px 12px;
+  border-radius: var(--ds-radius-xl);
+  background: var(--ds-bg-inverse);
+  color: var(--ds-fg-on-inverse);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-2);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding: 8px 12px;
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-inverse-raised);
+}
+
+.blockRow {
+  composes: block;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+
+.blockLabel {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-on-inverse-muted);
+}
+
+.blockValue {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.select {
+  width: 100%;
+  min-height: var(--ds-size-control);
+  padding: 0 8px;
+  border: 1px solid var(--ds-blue-200);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-bg-inverse);
+  color: var(--ds-fg-on-inverse);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.select:focus-visible,
+.navItem:focus-visible {
+  outline: 3px solid var(--ds-focus-ring-on-inverse);
+  outline-offset: -3px;
+}
+
+.navList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  width: 100%;
+  min-height: var(--ds-size-target-min);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ds-radius-md);
+  background: transparent;
+  color: var(--ds-fg-on-inverse);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--ds-bg-inverse-raised);
+}
+
+.navItem[aria-current='page'] {
+  background: var(--ds-neutral-0);
+  color: var(--ds-fg-brand);
+  font-weight: 600;
+  box-shadow: inset 4px 0 0 var(--ds-accent-600);
+}
+
+.sidebarFooter {
+  margin-top: auto;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-on-inverse-muted);
+}
+
+.main {
+  flex: 999 1 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-4);
+}
+
+/* DSC-NAV-03: cabeçalho de página */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  min-height: var(--ds-size-header);
+  padding: 12px 20px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-bg-surface);
+}
+
+.titleGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+  color: var(--ds-fg-brand);
+}
+
+.title:focus {
+  outline: none;
+}
+
+.chip {
+  padding: 3px 12px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-blue-200);
+  color: var(--ds-fg-default);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.userName {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--ds-size-avatar);
+  width: var(--ds-size-avatar);
+  height: var(--ds-size-avatar);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-bg-inverse);
+  color: var(--ds-fg-on-inverse);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.description {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 24px;
+  margin: 0;
+  padding: 0 4px;
+  color: var(--ds-fg-muted);
+}
+
+/* DSC-NAV-06: faixa de contexto */
+.contextBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 12px 20px;
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-info);
+  color: var(--ds-fg-default);
+}

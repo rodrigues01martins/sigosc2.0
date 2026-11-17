@@ -1,0 +1,363 @@
+/*
+ * Estilos de componentes do DS-05 usados na Gestão da OSC (DEV-01.4).
+ * Valores conferidos com o protótipo homologado HF-G05 (estilos computados).
+ */
+
+/* Botões — action.* (altura 40, raio 8, 14/20 peso 600, padding-x 16) */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-size-control);
+  padding: 0 var(--ds-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-sm);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:focus-visible,
+.linkButton:focus-visible,
+.userLink:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.primary {
+  composes: button;
+  background: var(--ds-primary-700);
+  border-color: var(--ds-primary-700);
+  color: var(--ds-neutral-0);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--ds-primary-900);
+  border-color: var(--ds-primary-900);
+}
+
+.primaryActive {
+  composes: button;
+  background: var(--ds-primary-900);
+  border-color: var(--ds-primary-900);
+  color: var(--ds-neutral-0);
+}
+
+.secondary {
+  composes: button;
+  background: var(--ds-neutral-0);
+  border-color: var(--ds-primary-700);
+  color: var(--ds-primary-700);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--ds-blue-200);
+  color: var(--ds-primary-900);
+}
+
+.highlight {
+  composes: button;
+  background: var(--ds-accent-600);
+  border-color: var(--ds-accent-600);
+  color: var(--ds-neutral-900);
+}
+
+.highlight:hover:not(:disabled) {
+  background: var(--ds-accent-300);
+  border-color: var(--ds-accent-300);
+}
+
+/* action.disabled */
+.primary:disabled,
+.secondary:disabled,
+.highlight:disabled,
+.primaryActive:disabled {
+  background: var(--ds-neutral-100);
+  border-color: var(--ds-neutral-100);
+  color: var(--ds-neutral-600);
+  cursor: not-allowed;
+}
+
+.blockLeft {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+/* action.cancel: botão-link sublinhado */
+.linkButton {
+  min-height: var(--ds-size-control);
+  padding: 0 var(--ds-space-2);
+  border: 0;
+  background: none;
+  color: var(--ds-neutral-800);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Cartão — surface, borda subtle, raio 16, padding 24, shadow.sm */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-5);
+  padding: var(--ds-space-6);
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-bg-surface);
+  box-shadow: var(--ds-shadow-sm);
+  min-width: 0;
+}
+
+.cardFlush {
+  composes: card;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--ds-fg-default);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--ds-fg-default);
+}
+
+.muted {
+  margin: 0;
+  color: var(--ds-fg-muted);
+}
+
+.meta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-muted);
+}
+
+/* Campos somente leitura (border.style.dashed) */
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: var(--ds-space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.fieldValue {
+  min-height: var(--ds-size-control);
+  padding: 9px 12px;
+  border: 1px dashed var(--ds-neutral-500);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-neutral-100);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.fieldBadge {
+  display: flex;
+  align-items: center;
+  min-height: var(--ds-size-control);
+}
+
+/* Avisos — feedback.* (sem borda, raio 12) */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--ds-radius-md);
+}
+
+.info {
+  composes: notice;
+  background: var(--ds-feedback-info-bg);
+  color: var(--ds-feedback-info-fg);
+}
+
+.success {
+  composes: notice;
+  background: var(--ds-feedback-success-bg);
+  color: var(--ds-feedback-success-fg);
+}
+
+.warning {
+  composes: notice;
+  background: var(--ds-feedback-warning-bg);
+  color: var(--ds-feedback-warning-fg);
+}
+
+.error {
+  composes: notice;
+  background: var(--ds-feedback-error-bg);
+  color: var(--ds-feedback-error-fg);
+}
+
+/* DSC-FBK-07: somente consulta */
+.readOnly {
+  composes: notice;
+  border: 1px dashed var(--ds-neutral-500);
+  background: var(--ds-neutral-100);
+  color: var(--ds-fg-default);
+}
+
+/* DSC-DAT-06: estado vazio */
+.empty {
+  display: flex;
+  gap: var(--ds-space-4);
+  align-items: flex-start;
+  padding: var(--ds-space-6);
+  border: 1px dashed var(--ds-neutral-500);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-surface);
+  color: var(--ds-fg-default);
+}
+
+.emptyIcon {
+  flex: 0 0 auto;
+  color: var(--ds-neutral-600);
+  padding-top: 2px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+
+/* Selos */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: var(--ds-radius-sm);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badgeGranted {
+  composes: badge;
+  border: 1px solid var(--ds-green-100);
+  background: var(--ds-green-100);
+  color: var(--ds-green-700);
+}
+
+.badgeNotGranted {
+  composes: badge;
+  border: 1px dashed var(--ds-neutral-500);
+  background: var(--ds-neutral-0);
+  color: var(--ds-neutral-600);
+}
+
+/* status.commercial.*: só contorno, prefixo "OSC ·" */
+.commercial {
+  composes: badge;
+  background: var(--ds-neutral-0);
+  border: 1px solid currentColor;
+}
+
+.commercialRegular {
+  composes: commercial;
+  color: var(--ds-green-700);
+}
+
+.commercialSuspended {
+  composes: commercial;
+  color: var(--ds-accent-800);
+}
+
+.commercialOther {
+  composes: commercial;
+  color: var(--ds-neutral-600);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Tabela (cabeçalho table.header 12/16 600 0.02em sobre neutral.50) */
+.tableScroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.table th {
+  padding: 8px 20px;
+  background: var(--ds-neutral-50);
+  color: var(--ds-fg-muted);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.table td {
+  padding: 12px 20px;
+  border-top: 1px solid var(--ds-border-subtle);
+  vertical-align: middle;
+}
+
+.rowSelected td {
+  background: var(--ds-blue-200);
+}
+
+.rowSelected td:first-child {
+  box-shadow: inset 4px 0 0 var(--ds-primary-700);
+}
+
+.userLink {
+  min-height: var(--ds-size-target-min);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ds-primary-700);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}

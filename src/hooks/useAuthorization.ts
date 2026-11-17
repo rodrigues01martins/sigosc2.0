@@ -18,24 +18,27 @@ import { useAuthState } from './useAuth.ts'
 export function useAuthorizationContext(membership: Membership): AuthorizationContext {
   const auth = useAuthState()
   const uid = auth.status === 'authenticated' ? auth.user.uid : null
-  return useMemo(() => {
-    const organization = membership.organization
-    return {
-      uid,
-      oscId: membership.oscId,
-      organization: organization
-        ? {
-            id: organization.id,
-            registrationStatus: organization.registrationStatus,
-            commercialStatus: organization.commercialStatus,
-            administratorUid: organization.administratorUid,
-          }
-        : null,
-      membership: uid
-        ? { uid, status: membership.status, permissions: membership.permissions, canManagePermissions: membership.canManagePermissions }
-        : null,
-    }
-  }, [membership, uid])
+  return useMemo(() => authorizationContextFor(uid, membership), [membership, uid])
+}
+
+/** Mesma montagem, como função pura (usada quando o vínculo ativo pode não existir). */
+export function authorizationContextFor(uid: string | null, membership: Membership): AuthorizationContext {
+  const organization = membership.organization
+  return {
+    uid,
+    oscId: membership.oscId,
+    organization: organization
+      ? {
+          id: organization.id,
+          registrationStatus: organization.registrationStatus,
+          commercialStatus: organization.commercialStatus,
+          administratorUid: organization.administratorUid,
+        }
+      : null,
+    membership: uid
+      ? { uid, status: membership.status, permissions: membership.permissions, canManagePermissions: membership.canManagePermissions }
+      : null,
+  }
 }
 
 /** Avalia uma operação com o avaliador de domínio compartilhado. */

@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { ENVIRONMENT_LABEL } from '../config/environmentLabels.ts'
 import type { AppEnvironment } from '../config/environmentValidation.ts'
 import { useAuthState } from '../hooks/useAuth.ts'
-import { AuthenticatedPage } from '../pages/Auth/AuthenticatedPage.tsx'
+import { BaseLayout } from '../layouts/BaseLayout.tsx'
 import { LoginPage } from '../pages/Auth/LoginPage.tsx'
 import { PasswordResetPage } from '../pages/Auth/PasswordResetPage.tsx'
 import { HomePage } from '../pages/Home/HomePage.tsx'
+import { OscWorkspace } from '../pages/Osc/OscWorkspace.tsx'
 import { LoadingState } from './LoadingState.tsx'
 
 interface AuthGateProps {
@@ -14,6 +15,8 @@ interface AuthGateProps {
 
 /**
  * Controle de acesso às páginas técnicas conforme o estado da sessão (DEV-01.1).
+ * DEV-01.4: a sessão autenticada usa o layout homologado da Gestão da OSC (com o
+ * próprio `<main>`); o BaseLayout fica restrito às telas técnicas.
  *
  * ATENÇÃO: isto controla apenas o que a INTERFACE exibe. Não é mecanismo de
  * autorização — a proteção dos dados depende das Security Rules no servidor.
@@ -23,27 +26,32 @@ export function AuthGate({ environment }: AuthGateProps) {
 
   switch (state.status) {
     case 'loading':
-      return <LoadingState label="Verificando sessão…" />
+      return (
+        <BaseLayout>
+          <LoadingState label="Verificando sessão…" />
+        </BaseLayout>
+      )
     case 'unavailable':
       return (
-        <HomePage
-          notice={
-            <>
-              Autenticação indisponível: a configuração do Firebase deste ambiente não é válida.
-              Consulte o diagnóstico abaixo.
-            </>
-          }
-        />
+        <BaseLayout>
+          <HomePage
+            notice={
+              <>
+                Autenticação indisponível: a configuração do Firebase deste ambiente não é válida.
+                Consulte o diagnóstico abaixo.
+              </>
+            }
+          />
+        </BaseLayout>
       )
     case 'unauthenticated':
-      return <PublicArea />
-    case 'authenticated':
       return (
-        <AuthenticatedPage
-          user={state.user}
-          environmentLabel={environment ? ENVIRONMENT_LABEL[environment] : 'Não identificado'}
-        />
+        <BaseLayout>
+          <PublicArea />
+        </BaseLayout>
       )
+    case 'authenticated':
+      return <OscWorkspace environmentLabel={environment ? ENVIRONMENT_LABEL[environment] : 'Não identificado'} />
   }
 }
 

@@ -20,12 +20,8 @@ export const PASSWORD_RESET_ERROR_MESSAGE: Record<AuthErrorKind, string> = {
   unknown: 'Não foi possível processar a solicitação agora. Tente novamente.',
 }
 
-export const SIGN_OUT_ERROR_MESSAGE = 'Não foi possível encerrar a sessão. Tente novamente.'
 
 export const PASSWORD_RESET_CONFIRMATION =
   'Se o e-mail informado estiver cadastrado, você receberá uma mensagem com as instruções para redefinir a senha. Verifique também a caixa de spam.'
 
 export const PROVISIONAL_NOTICE = 'Interface técnica provisória — DEV-01.1'
-
-export const SESSION_PROVISIONAL_NOTICE =
-  'Interface técnica provisória para validação da arquitetura — DEV-01.3'

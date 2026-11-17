@@ -93,11 +93,13 @@ describe('A01/A06 — login e página técnica protegida', () => {
     await screen.findByLabelText('E-mail')
     fillLogin(TEST_ACCOUNT.email, TEST_ACCOUNT.password)
 
-    expect(await screen.findByText('Autenticação concluída.')).toBeTruthy()
+    // DEV-01.4: a página autenticada passou a ser a Gestão da OSC (layout homologado).
+    expect(await screen.findByRole('navigation', { name: 'Navegação da Gestão da OSC' })).toBeTruthy()
     expect(screen.getByText(TEST_ACCOUNT.email)).toBeTruthy()
-    expect(screen.getByText('Testes')).toBeTruthy()
+    expect(screen.getByText(/Ambiente: Testes/)).toBeTruthy()
     // DEV-01.2: texto atualizado — o acesso às OSCs agora depende de vínculo ativo.
-    expect(screen.getByText(/não concede acesso a organizações, parcerias/)).toBeTruthy()
+    // Conta fictícia sem vínculos: autenticada, mas sem acesso a OSCs (autenticação ≠ autorização).
+    expect(await screen.findByText('Nenhum vínculo organizacional autorizado')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Sair' })).toBeTruthy()
     expect(screen.queryByLabelText('Senha')).toBeNull()
     expect(document.body.textContent).not.toContain(TEST_ACCOUNT.password)
@@ -106,7 +108,7 @@ describe('A01/A06 — login e página técnica protegida', () => {
 
   it('sessão persistida é restaurada diretamente na página autenticada (A04)', async () => {
     const { fake } = renderApp({ accounts: [TEST_ACCOUNT], persistedUser: TEST_ACCOUNT })
-    expect(await screen.findByText('Autenticação concluída.')).toBeTruthy()
+    expect(await screen.findByRole('navigation', { name: 'Navegação da Gestão da OSC' })).toBeTruthy()
     expect(fake.calls).not.toContain('signInWithEmailAndPassword')
   })
 })
@@ -160,7 +162,7 @@ describe('A03 — logout', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Sair' }))
     expect((await screen.findByRole('alert')).textContent).toBe('Não foi possível encerrar a sessão. Tente novamente.')
-    expect(screen.getByText('Autenticação concluída.')).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Navegação da Gestão da OSC' })).toBeTruthy()
   })
 })
 
@@ -222,7 +224,7 @@ describe('A10 — React StrictMode', () => {
     expect(fake.maxConcurrentObservers()).toBe(1)
 
     fillLogin(TEST_ACCOUNT.email, TEST_ACCOUNT.password)
-    await screen.findByText('Autenticação concluída.')
+    await screen.findByRole('navigation', { name: 'Navegação da Gestão da OSC' })
     expect(fake.activeObservers()).toBe(1)
 
     view.unmount()

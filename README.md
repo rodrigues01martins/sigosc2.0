@@ -2,7 +2,7 @@
 
 **Sistema de Gestão de Parcerias com Organizações da Sociedade Civil**
 
-> **Estado atual: DEV-01.3 — permissões individuais, delegação e controle de acesso Multi-Tenant.**
+> **Estado atual: DEV-01.4 — integração inicial das interfaces homologadas de alta fidelidade (PAG-OSC01 a 03).**
 > As **100 funcionalidades homologadas** no Inventário Funcional V1.0 **ainda NÃO foram implementadas**.
 > O repositório contém a infraestrutura do frontend, a autenticação inicial e páginas técnicas provisórias.
 >
@@ -20,7 +20,7 @@ Lei Federal nº 13.019/2014 (Marco Regulatório das Organizações da Sociedade 
 
 | Camada | Tecnologia |
 | --- | --- |
-| Interface | React 19 + TypeScript 6 (modo estrito) |
+| Interface | React 19 + TypeScript 6 (modo estrito); Sistema de Design SIGOSC V1.0 (DS-05) com fonte Inter (SIL OFL 1.1, hospedada no próprio app) |
 | Desenvolvimento e build | Vite 8 |
 | Autenticação | Firebase Authentication (e-mail e senha) — DEV-01.1 |
 | Banco de dados (futuro) | Cloud Firestore |
@@ -30,6 +30,8 @@ Lei Federal nº 13.019/2014 (Marco Regulatório das Organizações da Sociedade 
 | Hospedagem | Vercel (site estático + Funções de servidor em `api/`) |
 | Operações privilegiadas | Firebase Admin SDK (somente em `api/`, nunca no navegador) |
 | Versionamento | GitHub |
+
+Navegação da Gestão da OSC por fragmento de URL (`#/identificacao`, `#/parcerias`, `#/usuarios`), sem necessidade de reescritas na Vercel.
 
 Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines`; a Vercel usa a mesma versão principal no build e nas funções). Compatível com Vite 8 (`^20.19 || >=22.12`) e Firebase Admin SDK 14 (`>=22`).
 
@@ -42,14 +44,14 @@ Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines
 │   └── _lib/             # Lógica do servidor (não exposta como rota)
 ├── src/
 │   ├── assets/           # Imagens, ícones e fontes importados pelo código
-│   ├── components/       # Componentes compartilhados (StatusCard, TechnicalPanel, AuthGate, AuthProvider)
+│   ├── components/       # Compartilhados (ds/: componentes do DS-05; osc/: contexto; AuthGate, providers)
 │   ├── config/           # Configurações centrais (app.ts, firebase.ts)
 │   ├── domain/           # Regras de negócio puras compartilhadas com o servidor (authorization.ts)
 │   ├── hooks/            # Hooks React (useAuthState, useAuthActions)
 │   ├── layouts/          # Estruturas de página (BaseLayout)
-│   ├── pages/            # Páginas (Home/: diagnóstico; Auth/: login e sessão; Organizations/: seleção de OSC)
+│   ├── pages/            # Páginas (Osc/: PAG-OSC01 a 03; Auth/: login; Home/: diagnóstico)
 │   ├── services/         # Serviços (firebase/: inicialização; auth/: autenticação; organizations/: vínculos)
-│   ├── styles/           # Estilos globais e variáveis de tema
+│   ├── styles/           # tokens.css (DS-05) e estilos globais
 │   ├── types/            # Tipos TypeScript compartilhados
 │   ├── utils/            # Funções utilitárias puras (validation.ts)
 │   ├── App.tsx           # Componente raiz
@@ -536,7 +538,74 @@ gestão, `osc-teste-alfa` precisa de outros membros além do administrador. Proc
 - Situação cadastral diferente de `active` bloqueia toda a gestão, inclusive consulta.
 - Granularidade das permissões por módulo (consulta × edição × aprovação) depende do Inventário V1.0.
 
-## 9. Publicação na Vercel
+## 9. Interface homologada da Gestão da OSC (DEV-01.4)
+
+### 9.1 Referências efetivamente consultadas
+
+Canvas de design "SIGOSC 2.0 — PRT-G01 Gestão da OSC" (artefato `3cbd679c-…`), lido sem alteração:
+
+| Referência | Uso |
+| --- | --- |
+| **HF-G05** (homologado por HF-V06) | Referência visual **mais recente** de PAG-OSC01 a 03; renderizado localmente e medido (estilos computados) |
+| HF-G01 (HF-V02) e relatórios HF-G02 a G05 | Confronto: OSC01–03 idênticas desde HF-G01 (AJ-HF-G03-02 removeu a alternância de fidelidade) |
+| DS-05 Partes 1 e 2 (Sistema de Design V1.0) | Paleta, tipografia, espaçamento, raios, sombras, foco → `src/styles/tokens.css` |
+| DS-05 Partes 3–6, AF-01, PD-01-P01 | Componentes DSC, lacunas e achados posteriores (registrados em 9.4) |
+| HF-IN01 | **Não utilizado**: artboard consolidado ainda "Candidato à Homologação" |
+| Protótipo de baixa fidelidade (Main) | **Não utilizado** (registro histórico) |
+
+O tema "Aprendiz do Futuro" anexado ao canvas pertence a outro produto e **não** foi usado.
+
+### 9.2 Implementado
+
+- `OscShell`: sidebar verde-petróleo (248 px, raio 20), marca, bloco de contexto, seleção da OSC
+  (automática com vínculo único; `<select>` com vários), navegação com estado ativo (`aria-current`,
+  marcador dourado), cabeçalho (título 28/36, selo "Gestão da OSC", usuário, Sair), faixa de contexto.
+- **PAG-OSC01**: dados reais da OSC (nome, situação cadastral, selo "OSC · situação comercial",
+  administrador único pela fonte autoritativa, vínculo do usuário), permissões do usuário e ações.
+- **PAG-OSC02**: estrutura visual com **estado indisponível**; pesquisa e "Cadastrar parceria"
+  desabilitados e identificados como aguardando implementação. Nenhuma parceria, coleção ou simulação.
+- **PAG-OSC03**: tabela de usuários, painel "Ações autorizadas", fluxo em 3 passos com confirmação em
+  linha (DSC-FBK-02), conceder/revogar permissão e delegação **via servidor**, exportação CSV,
+  suspensão comercial (somente consulta para o administrador; bloqueio para os demais, DSC-FBK-06/07).
+- Estados: carregando, erro de consulta (com nova tentativa), sem vínculo, vínculo inativo/OSC
+  indisponível, escolha de OSC, suspensão, sessão encerrada.
+
+### 9.3 Correspondência com o DS-05
+
+Cores, tipografia (Inter 400–700; 28/36, 20/28, 16/24, 14/22, 13/20, 12/16), espaçamentos (4–32),
+raios (8/12/16/20/pílula), sombra `shadow.sm`, foco (`secondary.600` 3 px; `accent.300` na sidebar),
+altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do DS-05.
+
+### 9.4 Diferenças em relação ao protótipo homologado
+
+| Item | Protótipo (HF-G05) | Implementação | Motivo |
+| --- | --- | --- | --- |
+| Barra "Controle de simulação", "Estrutura ilustrativa", códigos WF/PAG, rastreabilidade | Presentes | Ausentes | Elementos de protótipo, fora do produto (AF-01-05) |
+| CNPJ e quantidade de parcerias (OSC01) | Exibidos | Ausentes | Não existem no modelo de dados (sem dados inventados) |
+| Situação cadastral (OSC01) | Ausente | Exibida | Exigida pela DEV-01.4 (dado real) |
+| Administrador único (OSC01) | Nome | "Você" / "Designado pela administração da plataforma" | Nome de terceiros não é legível pelo cliente (Security Rules) |
+| Lista de parcerias, pesquisa, seleção (OSC02) | Dados fictícios e operações simuladas | Estado indisponível, controles desabilitados | Módulo não implementado |
+| Administrador "Todas as operacionais" (OSC03) | Sim | Contagem real das permissões | Regra da DEV-01.3: administrador **sem** permissões implícitas |
+| Catálogo de permissões (OSC03) | 15 permissões | 6 permissões de consulta | Catálogo vigente (DEV-01.3); alinhamento pendente — ver 9.5 |
+| Convidar / Desvincular usuário | Botões (simulação) | Não exibidos; aviso de implementação futura | Funcionalidades não implementadas |
+| Conceder/Revogar delegação, Exportar CSV | Ausentes | Presentes | Funcionalidades homologadas na DEV-01.3 |
+| OSC03 durante suspensão (administrador) | Página oculta | Somente consulta + exportação | Decisão funcional de suspensão (consulta e exportação pelo administrador) |
+| Vínculo inativo na tabela | Não representado | "Vínculo inativo" | Dado real; inativos só podem ter permissões revogadas |
+| Sair e identificação do usuário | Avatar e "Usuário da OSC" | E-mail, avatar e botão "Sair" | Logout obrigatório (DEV-01.1) |
+| Rodapé da sidebar | "Estrutura ilustrativa" | Ambiente e versão técnica | Identificação do ambiente (DEV-01.1) |
+| Tabela | Grade de `div` | `<table>` semântica | Acessibilidade (AF-01-22) |
+| Larguras intermediária/estreita (P08) | Não aplicadas | Quebra natural do flex, como no protótipo | P08 permanece hipótese pendente (L4/L5/L10) |
+
+### 9.5 Pendências para homologação
+
+- Validar visualmente no Preview com as contas de teste reais.
+- **Catálogo de permissões**: o HF-G05 mostra 15 permissões nomeadas (ex.: "Cadastrar parceria",
+  "Registrar e editar receitas e despesas"); o catálogo vigente tem 6 de consulta. Alinhar exige
+  decisão e nova evolução (não alterado nesta etapa).
+- Decidir a exibição do nome do administrador único para não administradores.
+- Lacunas abertas do DS-05 (tokens destrutivos L11, layout P08, confirmação PD-01-D06).
+
+## 10. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
 2. A Vercel detecta o preset **Vite** automaticamente:
@@ -550,12 +619,13 @@ gestão, `osc-teste-alfa` precisa de outros membros além do administrador. Proc
 e o preset Vite da Vercel já define build e diretório de saída. Quando um roteador SPA for adotado,
 será necessário adicionar uma regra de *rewrite* para `index.html`.
 
-## 10. Estado atual
+## 11. Estado atual
 
 | Item | Situação |
 | --- | --- |
 | Frontend React + TypeScript + Vite | Inicializado |
-| Página técnica de verificação | Implementada |
+| Página técnica de verificação | Implementada (exibida quando a configuração é inválida) |
+| Interface de alta fidelidade PAG-OSC01 a 03 | Integrada (DEV-01.4); PAG-OSC02 apenas estrutura visual |
 | Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
 | Security Rules Firestore/Storage (negação integral) | Criadas e testadas em emulador; publicação no Firebase de testes pendente |
 | Autenticação (login, recuperação de senha, logout, sessão local) | Implementada (DEV-01.1) — interface técnica provisória |

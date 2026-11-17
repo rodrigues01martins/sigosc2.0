@@ -1,51 +1,40 @@
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import './tokens.css';
+
+/*
+ * DEV-01.4: as variáveis das telas técnicas anteriores (login, diagnóstico) passam
+ * a apontar para os tokens do DS-05. O DS-05 define somente o tema claro.
+ */
 :root {
-  --color-primary: #1f4e79;
-  --color-text: #0f172a;
-  --color-muted: #475569;
-  --color-bg: #f1f5f9;
-  --color-surface: #ffffff;
-  --color-border: #e2e8f0;
-  --color-ok: #15803d;
-  --color-ok-bg: #f0fdf4;
-  --color-pending: #b45309;
-  --color-info: #1d4ed8;
-  --color-error: #b91c1c;
-  --color-error-bg: #fef2f2;
-  --color-pending-bg: #fffbeb;
-  --color-border-strong: #94a3b8;
-  --color-primary-strong: #1f4e79;
-  --color-on-primary: #ffffff;
-  --color-focus: #2563eb;
-  --radius: 0.5rem;
+  --color-primary: var(--ds-primary-900);
+  --color-primary-strong: var(--ds-primary-700);
+  --color-on-primary: var(--ds-neutral-0);
+  --color-text: var(--ds-fg-default);
+  --color-muted: var(--ds-fg-muted);
+  --color-bg: var(--ds-bg-page);
+  --color-surface: var(--ds-bg-surface);
+  --color-border: var(--ds-border-subtle);
+  --color-border-strong: var(--ds-border-control);
+  --color-ok: var(--ds-feedback-success-fg);
+  --color-ok-bg: var(--ds-feedback-success-bg);
+  --color-pending: var(--ds-feedback-warning-fg);
+  --color-pending-bg: var(--ds-feedback-warning-bg);
+  --color-info: var(--ds-primary-700);
+  --color-error: var(--ds-feedback-error-fg);
+  --color-error-bg: var(--ds-feedback-error-bg);
+  --color-focus: var(--ds-focus-ring);
+  --radius: var(--ds-radius-sm);
 
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  line-height: 1.5;
-  color: var(--color-text);
-  background: var(--color-bg);
+  color-scheme: light;
+  font-family: var(--ds-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--ds-fg-default);
+  background: var(--ds-bg-page);
   -webkit-font-smoothing: antialiased;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-primary: #93c5fd;
-    --color-text: #e2e8f0;
-    --color-muted: #94a3b8;
-    --color-bg: #0b1220;
-    --color-surface: #111a2e;
-    --color-border: #1e293b;
-    --color-ok: #4ade80;
-    --color-ok-bg: rgb(74 222 128 / 0.1);
-    --color-pending: #fbbf24;
-    --color-info: #60a5fa;
-    --color-error: #f87171;
-    --color-error-bg: rgb(248 113 113 / 0.12);
-    --color-pending-bg: rgb(251 191 36 / 0.1);
-    --color-border-strong: #475569;
-    --color-primary-strong: #2563eb;
-    --color-on-primary: #ffffff;
-    --color-focus: #93c5fd;
-  }
 }
 
 *,
@@ -57,5 +46,11 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--color-bg);
+  background: var(--ds-bg-page);
+}
+
+button,
+input,
+select {
+  font-family: inherit;
 }

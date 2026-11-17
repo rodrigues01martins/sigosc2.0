@@ -4,7 +4,6 @@ import { OrganizationProvider } from './components/OrganizationProvider.tsx'
 import { PermissionsApiProvider } from './components/PermissionsApiProvider.tsx'
 import { environmentValidation } from './config/environment.ts'
 import type { AuthContextValue } from './hooks/authContext.ts'
-import { BaseLayout } from './layouts/BaseLayout.tsx'
 import { getAuthService, getAuthStore } from './services/auth/index.ts'
 import { getOrganizationStore } from './services/organizations/index.ts'
 import { getPermissionsApi } from './services/permissions/index.ts'
@@ -19,9 +18,7 @@ function App() {
     <AuthProvider value={authDependencies}>
       <OrganizationProvider store={organizationStore}>
         <PermissionsApiProvider api={permissionsApi}>
-          <BaseLayout>
-            <AuthGate environment={environmentValidation.environment} />
-          </BaseLayout>
+          <AuthGate environment={environmentValidation.environment} />
         </PermissionsApiProvider>
       </OrganizationProvider>
     </AuthProvider>
