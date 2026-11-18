@@ -1,8 +1,8 @@
 /** DEV-02.2 — Domínio do Plano de Trabalho (`npm test`). Lógica pura; gravação real em tests/server. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { GRANTABLE_PERMISSIONS, isGrantablePermission, type AuthorizationContext, type GrantablePermissionId, type MembershipFacts, type OrganizationFacts } from './authorization.ts'
-import { FIELDS, checkFinalization, decideWorkPlanOperation, emptyValues, parseFieldValue, validateChanges, type PartnershipFacts } from './workPlans.ts'
+import { GRANTABLE_PERMISSIONS, PERMISSION_CATALOG, isGrantablePermission, sanitizePermissions, type AuthorizationContext, type GrantablePermissionId, type MembershipFacts, type OrganizationFacts } from './authorization.ts'
+import { CORRECTION_DECLARATION, FIELDS, checkFinalization, cleanJustification, validateCorrection, decideWorkPlanOperation, emptyValues, parseFieldValue, validateChanges, type PartnershipFacts } from './workPlans.ts'
 
 const TODAY = '2026-11-17'
 const osc: OrganizationFacts = { id: 'osc-a', registrationStatus: 'active', commercialStatus: 'active', administratorUid: 'admin' }
@@ -11,27 +11,37 @@ const ctx = (m: MembershipFacts, o: OrganizationFacts = osc): AuthorizationConte
 const facts: PartnershipFacts = { instrument: 'termo-colaboracao', termStart: '2026-03-01', termEnd: '2028-02-28', formalizationDate: '2026-02-20', administrativeStatus: 'em-execucao', workPlanApprovalDeclared: true }
 const informed = (value: string | number) => ({ state: 'informed', value })
 
-test('Catálogo DEV-02.2: view, edit e finalize concedíveis e independentes', () => {
-  for (const id of ['work-plan.view', 'work-plan.edit', 'work-plan.finalize']) assert.equal(isGrantablePermission(id), true)
-  assert.deepEqual(GRANTABLE_PERMISSIONS.filter((p) => p.startsWith('work-plan.')), ['work-plan.view', 'work-plan.edit', 'work-plan.finalize'])
+test('DEV-02.2-C01-T01 a T05/T07/T08 — DEC-PT-001: work-plan.edit única; finalize descontinuada não autoriza', () => {
+  assert.equal(isGrantablePermission('work-plan.finalize'), false)
+  assert.equal(PERMISSION_CATALOG.find((p) => p.id === 'work-plan.finalize')?.status, 'discontinued')
+  assert.deepEqual(GRANTABLE_PERMISSIONS.filter((p) => p.startsWith('work-plan.')), ['work-plan.view', 'work-plan.edit'])
+  // Vínculo com o identificador descontinuado gravado: descartado na leitura, sem conversão para edit.
+  assert.deepEqual(sanitizePermissions(['work-plan.finalize', 'work-plan.view']), ['work-plan.view'])
   const edit = ctx(member('u', ['work-plan.edit']))
-  const fin = ctx(member('u', ['work-plan.finalize']))
-  assert.equal(decideWorkPlanOperation(edit, 'start', 'em-execucao', 'not-structured').allowed, true)
-  assert.equal(decideWorkPlanOperation(edit, 'update', 'em-execucao', 'in-registration').allowed, true)
-  assert.deepEqual(decideWorkPlanOperation(edit, 'finalize', 'em-execucao', 'in-registration'), { allowed: false, reason: 'permission-not-granted' })
-  assert.deepEqual(decideWorkPlanOperation(fin, 'update', 'em-execucao', 'in-registration'), { allowed: false, reason: 'permission-not-granted' })
-  assert.equal(decideWorkPlanOperation(fin, 'finalize', 'em-execucao', 'in-registration').allowed, true)
-  // Administrador sem permissões implícitas; partnerships.* não autoriza o Plano.
-  assert.deepEqual(decideWorkPlanOperation(ctx(member('admin')), 'start', 'em-execucao', 'not-structured'), { allowed: false, reason: 'permission-not-granted' })
+  for (const op of ['start', 'update', 'finalize'] as const) assert.equal(decideWorkPlanOperation(edit, op, 'em-execucao', op === 'start' ? 'not-structured' : 'in-registration').allowed, true, op)
+  assert.equal(decideWorkPlanOperation(edit, 'correct', 'em-execucao', 'finalized').allowed, true)
+  const finalizeOnly = ctx(member('u', sanitizePermissions(['work-plan.finalize'])))
+  const viewOnly = ctx(member('u', ['work-plan.view']))
+  for (const c of [finalizeOnly, viewOnly]) {
+    for (const op of ['start', 'update', 'finalize', 'correct'] as const) {
+      assert.deepEqual(decideWorkPlanOperation(c, op, 'em-execucao', op === 'correct' ? 'finalized' : 'in-registration'), { allowed: false, reason: 'permission-not-granted' })
+    }
+  }
+  assert.deepEqual(decideWorkPlanOperation(ctx(member('admin')), 'finalize', 'em-execucao', 'in-registration'), { allowed: false, reason: 'permission-not-granted' })
   assert.equal(decideWorkPlanOperation(ctx(member('u', ['partnerships.create', 'partnerships.edit'])), 'start', 'em-execucao', 'not-structured').allowed, false)
+  // Correção só em Plano finalizado; edição comum nunca após a finalização.
+  assert.deepEqual(decideWorkPlanOperation(edit, 'correct', 'em-execucao', 'in-registration'), { allowed: false, reason: 'not-finalized' })
+  assert.deepEqual(decideWorkPlanOperation(edit, 'update', 'em-execucao', 'finalized'), { allowed: false, reason: 'already-finalized' })
 })
 
 test('DEV-02.2-T11/T12/T13/T20 — suspensão comercial, arquivada, suspensa e finalizado', () => {
-  const all = ctx(member('u', ['work-plan.edit', 'work-plan.finalize']))
+  const all = ctx(member('u', ['work-plan.edit']))
   assert.deepEqual(decideWorkPlanOperation(ctx(member('u', ['work-plan.edit']), { ...osc, commercialStatus: 'suspended' }), 'start', 'em-execucao', 'not-structured'), { allowed: false, reason: 'commercial-suspension' })
   assert.deepEqual(decideWorkPlanOperation(all, 'update', 'arquivada', 'in-registration'), { allowed: false, reason: 'partnership-archived' })
   for (const status of ['suspensa', 'encerrada'] as const) assert.equal(decideWorkPlanOperation(all, 'finalize', status, 'in-registration').allowed, true)
   for (const op of ['start', 'update', 'finalize'] as const) assert.deepEqual(decideWorkPlanOperation(all, op, 'em-execucao', 'finalized'), { allowed: false, reason: 'already-finalized' })
+  assert.deepEqual(decideWorkPlanOperation(all, 'correct', 'arquivada', 'finalized'), { allowed: false, reason: 'partnership-archived' })
+  assert.equal(decideWorkPlanOperation(all, 'correct', 'suspensa', 'finalized').allowed, true)
 })
 
 test('DEV-02.2-T07 — não informado × não aplicável × zero, por campo', () => {
@@ -68,4 +78,28 @@ test('DEV-02.2-T18 — conferência para finalização: pendências e avisos nã
   assert.equal(checkFinalization(filled, { ...facts, workPlanApprovalDeclared: false }).pending.length, 1)
   const outside = checkFinalization({ ...filled, executionEnd: { state: 'informed', value: '2029-01-01' }, approvalDate: { state: 'informed', value: '2026-02-25' } }, facts)
   assert.deepEqual([outside.pending.length, outside.warnings.length], [0, 2])
+})
+
+test('DEV-02.2-C01-T11/T12/T13 — validação da correção: justificativa, declaração, alteração efetiva e requisitos', () => {
+  const final = { ...emptyValues(), approvalDate: { state: 'informed', value: '2026-02-10' }, executionStart: { state: 'informed', value: '2026-03-01' }, executionEnd: { state: 'informed', value: '2028-02-28' } } as const
+  const ok = validateCorrection({ changes: { approvalDate: informed('2026-02-15'), estimatedBeneficiaries: informed(0) }, justification: '  Data transcrita   errada.  ', declaration: true }, final, facts, TODAY)
+  assert.ok(ok.ok)
+  assert.deepEqual(ok.items, [
+    { field: 'approvalDate', before: { state: 'informed', value: '2026-02-10' }, after: { state: 'informed', value: '2026-02-15' } },
+    { field: 'estimatedBeneficiaries', before: { state: 'not-informed' }, after: { state: 'informed', value: 0 } },
+  ])
+  assert.equal(ok.justification, 'Data transcrita errada.')
+  const err = (input: Record<string, unknown>) => {
+    const r = validateCorrection({ changes: { approvalDate: informed('2026-02-15') }, justification: 'Justificativa válida.', declaration: true, ...input }, final, facts, TODAY)
+    return r.ok ? {} : r.errors
+  }
+  assert.deepEqual(err({ justification: '   ' }), { correctionReason: 'justification-required' })
+  assert.deepEqual(err({ justification: 'a b c d e' }), { correctionReason: 'justification-too-short' }) // espaços não contam
+  assert.deepEqual(err({ declaration: 'true' }), { declaration: 'declaration-required' })
+  assert.deepEqual(err({ changes: { approvalDate: informed('2026-02-10') } }), { changes: 'no-change' })
+  assert.deepEqual(err({ changes: { executionStart: { state: 'not-informed' } } }), { changes: 'breaks-finalization' })
+  assert.deepEqual(err({ changes: { registrationStatus: 'in-registration' } }), { changes: 'invalid' })
+  assert.deepEqual(err({ changes: [] }), { changes: 'required' })
+  assert.equal(cleanJustification('ok\u0007texto suficiente').error, 'invalid')
+  assert.match(CORRECTION_DECLARATION, /não representando alteração formal/)
 })

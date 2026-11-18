@@ -98,7 +98,7 @@ export function WorkPlanEditor({ plan, initialForm, reloading = false, onDirtyCh
       onStale(form)
       return
     }
-    if (result.error === 'invalid-values' && result.fields) setErrors(result.fields)
+    if (result.error === 'invalid-values' && result.fields) setErrors(result.fields as typeof errors)
     setFailure(
       result.error === 'network'
         ? 'Não foi possível comunicar com o servidor. Nenhuma alteração foi confirmada; os dados digitados foram mantidos.'

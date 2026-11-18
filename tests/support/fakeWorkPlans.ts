@@ -3,17 +3,17 @@
  * Não decide autorização (testada no servidor com emuladores); aplica as gravações como o
  * servidor confirmaria, para exercitar a interface.
  */
-import { checkFinalization, emptyValues, type FieldValue, type WorkPlanField } from '../../src/domain/workPlans.ts'
+import { checkFinalization, emptyValues, validateCorrection, type FieldValue, type WorkPlanField, type WorkPlanValues } from '../../src/domain/workPlans.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import type { WorkPlansSdk } from '../../src/services/workPlans/workPlanService.ts'
-import type { WorkPlansApi, WorkPlansResult } from '../../src/services/workPlans/workPlansApi.ts'
+import type { CorrectionEntry, HistoryResult, WorkPlansApi, WorkPlansResult } from '../../src/services/workPlans/workPlansApi.ts'
 import { workPlanDocument, workPlanPath } from './workPlanFixtures.ts'
 
 export interface FakeWorkPlansDb {
   readonly kind: 'fake-work-plans'
 }
 
-type Call = { kind: 'start' | 'update' | 'finalize'; request: Record<string, unknown> }
+type Call = { kind: 'start' | 'update' | 'finalize' | 'correct' | 'history'; request: Record<string, unknown> }
 
 export function createFakeWorkPlans(initial: Parameters<typeof workPlanDocument>[0][] = []) {
   const db: FakeWorkPlansDb = { kind: 'fake-work-plans' }
@@ -33,13 +33,15 @@ export function createFakeWorkPlans(initial: Parameters<typeof workPlanDocument>
     },
   }
 
-  let override: ((call: Call) => WorkPlansResult | Promise<WorkPlansResult> | undefined) | null = null
+  const history = new Map<string, CorrectionEntry[]>()
+  const FACTS = { instrument: 'termo-colaboracao', termStart: '2000-01-01', termEnd: '2999-12-31', formalizationDate: '2999-12-31', administrativeStatus: 'em-execucao', workPlanApprovalDeclared: true } as const
+  let override: ((call: Call) => WorkPlansResult | HistoryResult | Promise<WorkPlansResult | HistoryResult> | undefined) | null = null
   const ok = (revision: number, changed = true): WorkPlansResult => ({ ok: true, revision, changed, warnings: [] })
   const api: WorkPlansApi = {
     async start(request) {
       const call: Call = { kind: 'start', request }
       calls.push(call)
-      const custom = await override?.(call)
+      const custom = (await override?.(call)) as WorkPlansResult | undefined
       if (custom) return custom
       const path = workPlanPath(request.oscId, request.partnershipId)
       if (!docs.has(path)) docs.set(path, workPlanDocument({ oscId: request.oscId, partnershipId: request.partnershipId }))
@@ -48,7 +50,7 @@ export function createFakeWorkPlans(initial: Parameters<typeof workPlanDocument>
     async update(request) {
       const call: Call = { kind: 'update', request }
       calls.push(call)
-      const custom = await override?.(call)
+      const custom = (await override?.(call)) as WorkPlansResult | undefined
       if (custom) return custom
       const path = workPlanPath(request.oscId, request.partnershipId)
       const doc = docs.get(path)
@@ -61,7 +63,7 @@ export function createFakeWorkPlans(initial: Parameters<typeof workPlanDocument>
     async finalize(request) {
       const call: Call = { kind: 'finalize', request }
       calls.push(call)
-      const custom = await override?.(call)
+      const custom = (await override?.(call)) as WorkPlansResult | undefined
       if (custom) return custom
       const path = workPlanPath(request.oscId, request.partnershipId)
       const doc = docs.get(path)
@@ -71,6 +73,32 @@ export function createFakeWorkPlans(initial: Parameters<typeof workPlanDocument>
       if (check.pending.length) return { ok: false, error: 'finalization-pending', pending: check.pending }
       docs.set(path, { ...doc, registrationStatus: 'finalized', revision: (doc.revision as number) + 1, finalizedAt: new Date(), finalizedBy: 'simulado' })
       return ok((doc.revision as number) + 1)
+    },
+    async correct(request) {
+      const call: Call = { kind: 'correct', request }
+      calls.push(call)
+      const custom = (await override?.(call)) as WorkPlansResult | undefined
+      if (custom) return custom
+      const path = workPlanPath(request.oscId, request.partnershipId)
+      const doc = docs.get(path)
+      if (!doc) return { ok: false, error: 'not-structured' }
+      if (doc.revision !== request.expectedRevision) return { ok: false, error: 'stale' }
+      const current = { ...emptyValues(), ...(doc.values as object) } as WorkPlanValues
+      const validation = validateCorrection(request, current, FACTS, '2026-11-17')
+      if (!validation.ok) return { ok: false, error: 'invalid-correction', fields: validation.errors }
+      const revision = (doc.revision as number) + 1
+      docs.set(path, { ...doc, values: { ...current, ...Object.fromEntries(validation.items.map((i) => [i.field, i.after])) }, revision })
+      const list = history.get(path) ?? []
+      list.push({ at: new Date('2026-11-17T15:00:00Z').toISOString(), actor: 'you', actorAuthority: 'member', corrections: validation.items, justification: validation.justification, fromRevision: revision - 1, toRevision: revision })
+      history.set(path, list)
+      return ok(revision)
+    },
+    async history(request) {
+      const call: Call = { kind: 'history', request }
+      calls.push(call)
+      const custom = (await override?.(call)) as HistoryResult | undefined
+      if (custom) return custom
+      return { ok: true, entries: history.get(workPlanPath(request.oscId, request.partnershipId)) ?? [] }
     },
   }
 

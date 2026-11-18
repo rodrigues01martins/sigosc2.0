@@ -25,7 +25,7 @@ const withPermissions = (permissions: string[], extra?: RenderOptions['prepare']
   db.docs.set(path, { ...db.docs.get(path), permissions })
   extra?.(db)
 }
-const ALL = ['partnerships.view', 'work-plan.view', 'work-plan.edit', 'work-plan.finalize']
+const ALL = ['partnerships.view', 'work-plan.view', 'work-plan.edit'] // DEC-PT-001: edit inclui a finalização
 const informed = (value: string | number) => ({ state: 'informed', value }) as const
 const REQUIRED = { approvalDate: informed('2026-02-10'), executionStart: informed('2026-03-01'), executionEnd: informed('2028-02-28') }
 
@@ -172,18 +172,123 @@ describe('Finalização interna', () => {
     expect(screen.getByText('10/02/2026')).toBeTruthy()
   })
 
-  it('DEV-02.2-T18 — sem work-plan.finalize: edição possível, finalização indisponível com orientação', async () => {
-    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view', 'work-plan.edit']), workPlans: [{ oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }] })
+  it('DEV-02.2-C01-T04/T05/T07 — work-plan.finalize (descontinuada) ou só view: sem edição nem finalização', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view', 'work-plan.finalize']), workPlans: [{ oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }] })
     await screen.findByRole('heading', { name: 'Conferência para finalização interna' })
     expect(screen.queryByRole('button', { name: 'Finalizar cadastro' })).toBeNull()
-    expect(screen.getByText(/A finalização interna exige a permissão/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Salvar alterações' })).toBeNull()
+    expect(screen.getByText(/A finalização interna exige a permissão “Registrar, finalizar e corrigir o Plano de Trabalho”/)).toBeTruthy()
   })
 
-  it('DEV-02.2-T20 — registro finalizado: somente consulta, mesmo com todas as permissões', async () => {
+  it('DEV-02.2-T20 / C01-T09 — registro finalizado: sem edição comum; só a correção de erro material', async () => {
     openPlan({ prepare: withPermissions(ALL), workPlans: [{ oscId: ALFA, partnershipId: RUNNING, values: REQUIRED, status: 'finalized' }] })
     await screen.findByRole('heading', { name: 'Plano de Trabalho estruturado' })
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.queryByRole('button', { name: /Salvar|Finalizar|Iniciar/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Corrigir erro material' })).toBeTruthy()
+  })
+})
+
+const FINAL = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED, status: 'finalized' as const, revision: 3 }
+async function openCorrection(options: RenderOptions = {}) {
+  const app = openPlan({ prepare: withPermissions(ALL), workPlans: [FINAL], ...options })
+  fireEvent.click(await screen.findByRole('button', { name: 'Corrigir erro material' }))
+  await screen.findByRole('heading', { name: 'Corrigir erro material' })
+  return app
+}
+const pick = (label: string) => fireEvent.click(screen.getByRole('checkbox', { name: new RegExp(`^${label} — registrado:`) }))
+const reason = (text: string) => fireEvent.change(screen.getByLabelText(/Justificativa da correção/), { target: { value: text } })
+const declare = () => fireEvent.click(screen.getByRole('checkbox', { name: /Declaro que esta correção corresponde/ }))
+
+describe('Correção de erro material (DEC-PT-002)', () => {
+  it('DEV-02.2-C01-T10/T13/T15 — corrige um ou mais campos com revisão anterior → corrigido; Plano continua finalizado; histórico atualizado', async () => {
+    const { workPlans } = await openCorrection()
+    expect(screen.getByText('Nenhuma correção material registrada.')).toBeTruthy()
+    pick('Data da aprovação pelo órgão público')
+    fireEvent.change(screen.getByLabelText('Valor correto: Data da aprovação pelo órgão público'), { target: { value: '2026-02-15' } })
+    pick('Quantidade estimada de beneficiários')
+    fireEvent.change(screen.getByLabelText('Valor correto: Quantidade estimada de beneficiários'), { target: { value: '0' } })
+    reason('Data transcrita incorretamente do Plano aprovado.')
+    declare()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirmar correção de erro material' })
+    expect(within(dialog).getByRole('list', { name: 'Alterações a confirmar' }).textContent).toMatch(/10\/02\/2026 → 15\/02\/2026.*Não informado → 0/)
+    expect(workPlans.calls.filter((c) => c.kind === 'correct')).toHaveLength(0) // nada antes da confirmação
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirmar correção' }))
+    expect((await screen.findByText(/Correção de erro material registrada/)).getAttribute('role')).toBe('status')
+    const request = workPlans.calls.find((c) => c.kind === 'correct')?.request
+    expect(request).toMatchObject({ expectedRevision: 3, declaration: true, justification: 'Data transcrita incorretamente do Plano aprovado.', changes: { approvalDate: { state: 'informed', value: '2026-02-15' }, estimatedBeneficiaries: { state: 'informed', value: 0 } } })
+    const history = await screen.findByRole('list', { name: 'Correções materiais em ordem cronológica' })
+    expect(history.textContent).toMatch(/Anterior: 10\/02\/2026 · Corrigido: 15\/02\/2026/)
+    expect(history.textContent).toMatch(/Anterior: Não informado · Corrigido: 0/)
+    expect(history.textContent).toMatch(/por você/)
+    expect(screen.getByText('Cadastro no SIGOSC: Estruturado e finalizado internamente')).toBeTruthy()
+    await waitFor(() => expect(screen.getAllByText('15/02/2026').length).toBeGreaterThan(0))
+    expect(screen.queryByRole('button', { name: 'Salvar alterações' })).toBeNull()
+  })
+
+  it('DEV-02.2-C01-T11/T12 — justificativa, declaração e alteração efetiva exigidas; nada enviado', async () => {
+    const { workPlans } = await openCorrection()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Selecione ao menos um campo a corrigir.')
+    pick('Data da aprovação pelo órgão público') // valor idêntico ao registrado
+    reason('   ')
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    await waitFor(() => expect(screen.getByText('Nenhum valor foi efetivamente alterado.')).toBeTruthy())
+    expect(screen.getByText('Informe a justificativa da correção.')).toBeTruthy()
+    expect(screen.getByText('Confirme a declaração de correspondência ao Plano aprovado.')).toBeTruthy()
+    expect(screen.getByLabelText(/Justificativa da correção/).getAttribute('aria-describedby')).toMatch(/error/)
+    fireEvent.change(screen.getByLabelText('Valor correto: Data da aprovação pelo órgão público'), { target: { value: '' } })
+    reason('Campo obrigatório apagado por engano.')
+    declare()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/deixaria o Plano sem os requisitos da finalização/)
+    expect(workPlans.calls.filter((c) => c.kind === 'correct')).toHaveLength(0)
+  })
+
+  it('Falha de rede mantém os dados; conflito de revisão recarrega sem perder o que foi digitado', async () => {
+    const { workPlans } = await openCorrection()
+    workPlans.respondWith((call) => (call.kind === 'correct' ? { ok: false, error: 'network' } : undefined))
+    pick('Forma de execução')
+    fireEvent.change(screen.getByLabelText('Valor correto: Forma de execução'), { target: { value: 'Execução direta.' } })
+    reason('Campo omitido na transcrição do Plano.')
+    declare()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar correção' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/os dados informados foram mantidos/)
+    expect((screen.getByLabelText('Valor correto: Forma de execução') as HTMLInputElement).value).toBe('Execução direta.')
+    workPlans.respondWith(null)
+    const path = `oscs/${ALFA}/partnerships/${RUNNING}/workPlans/original`
+    workPlans.docs.set(path, { ...workPlans.docs.get(path), revision: 4 })
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar correção' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar correção' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/alterado por outra pessoa/)
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisar correção' })) // reabilitado após a recarga
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar correção' }))
+    await screen.findByText(/Correção de erro material registrada/)
+    expect(workPlans.calls.filter((c) => c.kind === 'correct').map((c) => c.request.expectedRevision)).toEqual([3, 3, 4])
+  })
+
+  it('DEV-02.2-C01-T05/T18/T19 — só view: histórico sem ação; arquivada: sem correção; erro do histórico com nova tentativa', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [FINAL] })
+    await screen.findByRole('heading', { name: 'Histórico de correções materiais' })
+    expect(screen.queryByRole('button', { name: 'Corrigir erro material' })).toBeNull()
+    cleanup()
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, partnershipId: 'pAlfaCooperacao01xx' }] }, 'pAlfaCooperacao01xx')
+    await screen.findByRole('heading', { name: 'Histórico de correções materiais' })
+    expect(screen.queryByRole('button', { name: 'Corrigir erro material' })).toBeNull()
+    cleanup()
+    const app = openPlan({ prepare: withPermissions(ALL), workPlans: [FINAL] })
+    app.workPlans.respondWith((call) => (call.kind === 'history' ? { ok: false, error: 'network' } : undefined))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Não foi possível consultar o histórico/)
+    app.workPlans.respondWith(null)
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }))
+    expect(await screen.findByText('Nenhuma correção material registrada.')).toBeTruthy()
+  })
+
+  it('DEV-02.2-C01-T20 — parceria administrativamente suspensa: correção disponível', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, partnershipId: 'pAlfaFomento02xxxxx' }] }, 'pAlfaFomento02xxxxx')
+    expect(await screen.findByRole('button', { name: 'Corrigir erro material' })).toBeTruthy()
   })
 })
 

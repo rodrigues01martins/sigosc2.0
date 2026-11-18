@@ -14,7 +14,8 @@ import { Timestamp } from 'firebase-admin/firestore'
 import handler from '../../api/osc-work-plans.ts'
 import { handlePermissionsRequest, type ApiResponse, type ServerDeps } from '../../api/_lib/permissionsService.ts'
 import { getServerDeps } from '../../api/_lib/serverDeps.ts'
-import { handleWorkPlansRequest } from '../../api/_lib/workPlansService.ts'
+import { correctionEventId, handleWorkPlansRequest } from '../../api/_lib/workPlansService.ts'
+import { CORRECTION_DECLARATION } from '../../src/domain/workPlans.ts'
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath } from '../support/organizationFixtures.ts'
 import { PARTNERSHIPS, partnershipDocument, partnershipPath } from '../support/partnershipFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
@@ -193,15 +194,16 @@ describe('Cadastro estruturado (work-plan.edit)', () => {
   })
 })
 
-describe('Finalização interna (work-plan.finalize)', () => {
+describe('Finalização interna (DEC-PT-001: work-plan.edit)', () => {
   beforeEach(async () => {
     await setPermissions(OP, ['work-plan.view', 'work-plan.edit'])
-    await setPermissions(DELEGATE, ['work-plan.view', 'work-plan.finalize'])
+    await setPermissions(DELEGATE, ['work-plan.view', 'work-plan.edit'])
   })
 
-  test('DEV-02.2-T18 — somente quem tem work-plan.finalize finaliza; pendências impedem; confirmação exigida', async () => {
+  test('DEV-02.2-C01-T03/T04 — work-plan.edit finaliza; work-plan.finalize isolada não autoriza; pendências e confirmação', async () => {
     await start(OP)
-    status(await finalize(OP), 403, 'permission-not-granted') // edit não implica finalize
+    await setPermissions(ADMIN, ['work-plan.view', 'work-plan.finalize']) // identificador descontinuado gravado
+    status(await finalize(ADMIN), 403, 'permission-not-granted')
     const pending = await finalize(DELEGATE)
     status(pending, 422, 'finalization-pending')
     assert.equal((pending.body.pending as string[]).length, 3)
@@ -224,7 +226,6 @@ describe('Finalização interna (work-plan.finalize)', () => {
     await update(OP, { ...REQUIRED, justification: informed('Texto finalizado.') })
     status(await finalize(DELEGATE, { revision: 2 }), 200)
     const before = await plan()
-    await setPermissions(OP, ['work-plan.edit', 'work-plan.finalize'])
     status(await update(OP, { justification: informed('Alteração silenciosa.') }, { revision: 3 }), 409, 'already-finalized')
     status(await finalize(OP, { revision: 3 }), 409, 'already-finalized')
     status(await start(OP), 409, 'already-finalized')
@@ -239,6 +240,162 @@ describe('Finalização interna (work-plan.finalize)', () => {
     const r = await finalize(DELEGATE, { revision: 2 })
     status(r, 200)
     assert.equal((r.body.warnings as string[]).length, 1)
+  })
+})
+
+/** Plano finalizado (pela API real) para os testes de correção material. */
+async function finalizedPlan(partnershipId = RUNNING) {
+  status(await start(OP, partnershipId), 201)
+  status(await update(OP, { ...REQUIRED, estimatedBeneficiaries: { state: 'not-informed' }, geographicScope: { state: 'not-applicable' } }, { partnershipId }), 200)
+  status(await finalize(OP, { partnershipId, revision: 2, requestId: `finalizacao-${partnershipId}` }), 200)
+  return plan(partnershipId)
+}
+const JUST = 'Data transcrita incorretamente; o Plano aprovado indica 15/02/2026.'
+const correct = (user: { uid: string }, changes: Record<string, unknown>, options: { partnershipId?: string; revision?: number; requestId?: string; justification?: unknown; declaration?: unknown; oscId?: string } = {}) =>
+  call(user, 'POST', {
+    oscId: options.oscId ?? ALFA,
+    partnershipId: options.partnershipId ?? RUNNING,
+    requestId: options.requestId ?? nextRequest(),
+    action: 'correct',
+    expectedRevision: options.revision ?? 3,
+    changes,
+    justification: 'justification' in options ? options.justification : JUST,
+    declaration: 'declaration' in options ? options.declaration : true,
+  })
+const history = (user: { uid: string }, partnershipId = RUNNING, oscId = ALFA) =>
+  handleWorkPlansRequest({ method: 'GET', authorization: `Bearer ${tokens.get(user.uid) ?? ''}`, query: new URLSearchParams({ oscId, partnershipId }), rawBody: '' }, deps)
+const corrections = async () => (await events()).filter((e) => e.action === 'material-correction')
+
+describe('Correção de erro material (DEC-PT-002)', () => {
+  beforeEach(() => setPermissions(OP, ['work-plan.view', 'work-plan.edit']))
+
+  test('DEV-02.2-C01-T10/T13/T14/T15 — corrige; preserva anterior e corrigido (com estados); finalização original intacta', async () => {
+    const before = await finalizedPlan()
+    const r = await correct(OP, { approvalDate: informed('2026-02-15'), estimatedBeneficiaries: informed(0), geographicScope: { state: 'not-informed' } }, { requestId: 'correcao-1' })
+    status(r, 200)
+    assert.equal(r.body.corrected, true)
+    const after = await plan()
+    assert.deepEqual(after?.values.approvalDate, { state: 'informed', value: '2026-02-15' })
+    assert.deepEqual(after?.values.estimatedBeneficiaries, { state: 'informed', value: 0 })
+    assert.deepEqual([after?.registrationStatus, after?.revision, after?.correctionCount], ['finalized', 4, 1])
+    assert.deepEqual([after?.finalizedBy, after?.finalizationRequestId, after?.createdBy], [before?.finalizedBy, before?.finalizationRequestId, before?.createdBy])
+    assert.equal((after?.finalizedAt as Timestamp).toMillis(), (before?.finalizedAt as Timestamp).toMillis())
+    assert.equal((after?.createdAt as Timestamp).toMillis(), (before?.createdAt as Timestamp).toMillis())
+    assert.deepEqual([after?.id, after?.oscId, after?.partnershipId, after?.origin], [before?.id, before?.oscId, before?.partnershipId, before?.origin])
+    const [event] = await corrections()
+    assert.ok(event)
+    assert.deepEqual(event.corrections, [
+      { field: 'approvalDate', before: { state: 'informed', value: '2026-02-10' }, after: { state: 'informed', value: '2026-02-15' } },
+      { field: 'estimatedBeneficiaries', before: { state: 'not-informed' }, after: { state: 'informed', value: 0 } },
+      { field: 'geographicScope', before: { state: 'not-applicable' }, after: { state: 'not-informed' } },
+    ])
+    assert.deepEqual([event.oscId, event.partnershipId, event.workPlanId, event.actorUid, event.requestId, event.fromRevision, event.toRevision], [ALFA, RUNNING, 'original', OP.uid, 'correcao-1', 3, 4])
+    assert.equal(event.justification, JUST)
+    assert.deepEqual(event.declaration, { accepted: true, text: CORRECTION_DECLARATION, automatedVerification: false })
+    assert.ok(event.at instanceof Timestamp)
+    // O evento de finalização original continua identificável.
+    assert.equal((await events()).filter((e) => e.action === 'finalize').length, 1)
+  })
+
+  test('DEV-02.2-C01-T11/T12 — justificativa significativa e declaração obrigatórias; sem alteração efetiva recusada', async () => {
+    await finalizedPlan()
+    const invalid = async (options: Parameters<typeof correct>[2], changes: Record<string, unknown>, key: string, code: string) => {
+      const r = await correct(OP, changes, options)
+      status(r, 422, 'invalid-correction')
+      assert.equal((r.body.fields as Record<string, string>)[key], code, JSON.stringify(r.body))
+    }
+    const change = { approvalDate: informed('2026-02-15') }
+    await invalid({ justification: '   ' }, change, 'correctionReason', 'justification-required')
+    await invalid({ justification: 'curta' }, change, 'correctionReason', 'justification-too-short')
+    await invalid({ justification: 'x'.repeat(2001) }, change, 'correctionReason', 'justification-too-long')
+    await invalid({ declaration: false }, change, 'declaration', 'declaration-required')
+    await invalid({ declaration: 'sim' }, change, 'declaration', 'declaration-required')
+    await invalid({}, { approvalDate: informed('2026-02-10') }, 'changes', 'no-change') // idêntico ao atual
+    await invalid({}, { approvalDate: { state: 'not-informed' } }, 'changes', 'breaks-finalization') // requisito da finalização
+    await invalid({}, { executionEnd: informed('2026-01-01') }, 'executionEnd', 'end-before-start')
+    await invalid({}, { approvalDate: informed('2999-01-01') }, 'approvalDate', 'in-future')
+    // Campos de identidade, autoria ou situação não são corrigíveis.
+    for (const forged of [{ registrationStatus: 'in-registration' }, { finalizedAt: 'x' }, { partnershipId: 'outra' }, { object: informed('x') }]) {
+      status(await correct(OP, forged), 422, 'invalid-correction')
+    }
+    status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, requestId: nextRequest(), action: 'correct', expectedRevision: 3, changes: change, justification: JUST, declaration: true, finalizedBy: ADMIN.uid }), 400)
+    assert.deepEqual([(await plan())?.revision, (await corrections()).length], [3, 0])
+  })
+
+  test('DEV-02.2-C01-T09 — edição comum segue bloqueada; correção só em Plano finalizado', async () => {
+    status(await start(OP), 201)
+    status(await correct(OP, { approvalDate: informed('2026-02-15') }, { revision: 1 }), 409, 'not-finalized')
+    await update(OP, REQUIRED)
+    status(await finalize(OP, { revision: 2 }), 200)
+    status(await update(OP, { justification: informed('Edição comum.') }, { revision: 3 }), 409, 'already-finalized')
+  })
+
+  test('DEV-02.2-C01-T16/T17 — correções concorrentes: uma vence; reenvio idempotente não duplica (inclusive simultâneo)', async () => {
+    await finalizedPlan()
+    await setPermissions(DELEGATE, ['work-plan.edit'])
+    const [a, b] = await Promise.all([
+      correct(OP, { approvalDate: informed('2026-02-15') }, { requestId: 'correcao-a-1' }),
+      correct(DELEGATE, { approvalDate: informed('2026-02-16') }, { requestId: 'correcao-b-1' }),
+    ])
+    assert.deepEqual([a.status, b.status].sort(), [200, 409])
+    assert.equal((a.status === 409 ? a : b).body.error, 'stale')
+    const winner = a.status === 200 ? OP : DELEGATE
+    const winnerId = a.status === 200 ? 'correcao-a-1' : 'correcao-b-1'
+    const replay = await correct(winner, { approvalDate: informed('2026-02-20') }, { requestId: winnerId, revision: 3 })
+    status(replay, 200)
+    assert.equal(replay.body.corrected, false)
+    // Reenvios simultâneos do mesmo pedido: uma única correção.
+    const parallel = await Promise.all(Array.from({ length: 4 }, () => correct(OP, { executionMethod: informed('Execução direta.') }, { requestId: 'correcao-paralela-1', revision: 4 })))
+    assert.ok(parallel.every((r) => r.status === 200))
+    assert.equal(parallel.filter((r) => r.body.corrected === true).length, 1)
+    assert.deepEqual([(await plan())?.revision, (await corrections()).length], [5, 2])
+    assert.ok(await deps.db.doc(`oscs/${ALFA}/workPlanEvents/${correctionEventId(winner.uid, winnerId)}`).get().then((d) => d.exists))
+  })
+
+  test('DEV-02.2-C01-T18/T20 — arquivada bloqueia; suspensão comercial bloqueia; suspensão administrativa da parceria não', async () => {
+    await finalizedPlan(SUSPENDED)
+    status(await correct(OP, { approvalDate: informed('2026-02-15') }, { partnershipId: SUSPENDED }), 200) // parceria suspensa: permitido
+    await finalizedPlan()
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}`).update({ administrativeStatus: 'arquivada' })
+    status(await correct(OP, { approvalDate: informed('2026-02-15') }), 403, 'partnership-archived')
+    await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
+    status(await correct(OP, { approvalDate: informed('2026-02-17') }, { partnershipId: SUSPENDED, revision: 4 }), 403, 'commercial-suspension')
+    assert.equal((await corrections()).length, 1)
+  })
+
+  test('DEV-02.2-C01-T05/T08/T21 — sem work-plan.edit (view, administrador, ID descontinuado) não corrige', async () => {
+    await finalizedPlan()
+    await setPermissions(DELEGATE, ['work-plan.view'])
+    status(await correct(DELEGATE, { approvalDate: informed('2026-02-15') }), 403, 'permission-not-granted')
+    status(await correct(ADMIN, { approvalDate: informed('2026-02-15') }), 403, 'permission-not-granted')
+    await setPermissions(DELEGATE, ['work-plan.view', 'work-plan.finalize'])
+    status(await correct(DELEGATE, { approvalDate: informed('2026-02-15') }), 403, 'permission-not-granted')
+    status(await correct(OP, { approvalDate: informed('2026-02-15') }, { oscId: GAMA }), 403, 'no-membership')
+    assert.equal((await corrections()).length, 0)
+  })
+
+  test('DEV-02.2-C01-T19 — histórico: servidor, work-plan.view, só a própria OSC; responsável sem dados de terceiros', async () => {
+    await finalizedPlan()
+    status(await correct(OP, { approvalDate: informed('2026-02-15') }, { requestId: 'historico-1' }), 200)
+    await setPermissions(DELEGATE, ['work-plan.edit'])
+    status(await correct(DELEGATE, { executionMethod: informed('Execução direta.') }, { revision: 4, justification: 'Campo omitido na transcrição do Plano aprovado.' }), 200)
+    const own = await history(OP)
+    status(own, 200)
+    const entries = own.body.entries as { actor: string; actorAuthority: string; corrections: { field: string }[]; justification: string; toRevision: number }[]
+    assert.deepEqual(entries.map((e) => [e.actor, e.actorAuthority, e.corrections[0]?.field, e.toRevision]), [['you', 'member', 'approvalDate', 4], ['other', 'delegate', 'executionMethod', 5]])
+    assert.equal(JSON.stringify(own.body).includes(DELEGATE.uid), false, 'sem UID ou e-mail de terceiros')
+    // Quem tem só edit (sem view) não consulta o histórico; nem outra OSC; nem sem vínculo.
+    status(await history(DELEGATE), 403, 'permission-not-granted')
+    await setPermissions(USERS.SINGLE, ['partnerships.view', 'work-plan.view'], GAMA)
+    status(await history(USERS.SINGLE), 403, 'no-membership')
+    status(await history(USERS.SINGLE, RUNNING, GAMA), 404, 'not-found') // ID de ALFA sob GAMA
+    status(await history(USERS.NONE), 403, 'no-membership')
+    status(await handleWorkPlansRequest({ method: 'GET', authorization: `Bearer ${tokens.get(OP.uid) ?? ''}`, query: new URLSearchParams({ oscId: ALFA, partnershipId: RUNNING, extra: '1' }), rawBody: '' }, deps), 400)
+    // Suspensão comercial: o administrador com view mantém a consulta; os demais não.
+    await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
+    status(await history(OP), 403, 'commercial-suspension')
+    await setPermissions(ADMIN, ['work-plan.view'])
+    status(await history(ADMIN), 200)
   })
 })
 
@@ -260,7 +417,7 @@ describe('Segurança e situações', () => {
   })
 
   test('DEV-02.2-T11 — suspensão comercial impede início, alteração e finalização', async () => {
-    await setPermissions(OP, ['work-plan.edit', 'work-plan.finalize'])
+    await setPermissions(OP, ['work-plan.edit'])
     await start(OP)
     await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
     status(await start(OP, SUSPENDED), 403, 'commercial-suspension')
@@ -269,7 +426,7 @@ describe('Segurança e situações', () => {
   })
 
   test('DEV-02.2-T12/T13 — arquivada: somente consulta; suspensa administrativamente: operações autorizadas', async () => {
-    await setPermissions(OP, ['work-plan.edit', 'work-plan.finalize'])
+    await setPermissions(OP, ['work-plan.edit'])
     status(await start(OP, ARCHIVED), 403, 'partnership-archived')
     status(await start(OP, SUSPENDED), 201)
     status(await update(OP, REQUIRED, { partnershipId: SUSPENDED }), 200)

@@ -3,6 +3,9 @@
  *
  * POST  {oscId, partnershipId, requestId, action: 'start' | 'finalize', ...} → iniciar / finalizar.
  * PATCH {oscId, partnershipId, requestId, expectedRevision, changes}       → alterar cadastro não finalizado.
+ * POST  {..., action: 'correct', expectedRevision, changes, justification, declaration} → correção de erro material.
+ * GET   ?oscId=…&partnershipId=…                                           → histórico de correções (servidor).
+ * Todas as gravações exigem `work-plan.edit` (DEC-PT-001); o histórico exige `work-plan.view`.
  * A consulta do Plano NÃO passa por aqui: é feita pelo cliente sob as Security Rules.
  *
  * Mesmo padrão da DEV-01.3-FIX01: o Firebase Admin SDK é carregado SOB DEMANDA, somente

@@ -3,7 +3,10 @@
  *
  * POST  {oscId, partnershipId, requestId, action: 'start'}                              → iniciar (`work-plan.edit`)
  * PATCH {oscId, partnershipId, requestId, expectedRevision, changes}                    → alterar (`work-plan.edit`)
- * POST  {oscId, partnershipId, requestId, action: 'finalize', expectedRevision, confirm} → finalizar (`work-plan.finalize`)
+ * POST  {oscId, partnershipId, requestId, action: 'finalize', expectedRevision, confirm} → finalizar (`work-plan.edit`, DEC-PT-001)
+ * POST  {oscId, partnershipId, requestId, action: 'correct', expectedRevision, changes, justification, declaration}
+ *       → correção de ERRO MATERIAL em Plano finalizado (`work-plan.edit`, DEC-PT-002)
+ * GET   ?oscId=…&partnershipId=…  → histórico de correções materiais (`work-plan.view`)
  *
  * Em cada requisição: token verificado → corpo em formato ESTRITO → TRANSAÇÃO que relê OSC,
  * vínculo, parceria e Plano → autorização (antes de revelar a existência da parceria) →
@@ -20,13 +23,15 @@ import { isAdministrativeStatus, isInstrument, isValidDate } from '../../src/dom
 import {
   EDIT_PERMISSION,
   FIELD_IDS,
-  FINALIZE_PERMISSION,
+  CORRECTION_DECLARATION,
   ORIGINAL_WORK_PLAN_ID,
+  VIEW_PERMISSION,
   checkFinalization,
   decideWorkPlanOperation,
   emptyValues,
   parseFieldValue,
   validateChanges,
+  validateCorrection,
   type FieldValue as PlanValue,
   type PartnershipFacts,
   type WorkPlanDenial,
@@ -49,6 +54,7 @@ type Parsed =
   | { kind: 'start'; oscId: string; partnershipId: string; requestId: string }
   | { kind: 'finalize'; oscId: string; partnershipId: string; requestId: string; expectedRevision: number }
   | { kind: 'update'; oscId: string; partnershipId: string; requestId: string; expectedRevision: number; changes: Record<string, unknown> }
+  | { kind: 'correct'; oscId: string; partnershipId: string; requestId: string; expectedRevision: number; changes: unknown; justification: unknown; declaration: unknown }
 
 const json = (status: number, body: Record<string, unknown>): ApiResponse => ({ status, body })
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -79,6 +85,11 @@ function parse(method: string | undefined, rawBody: string): Parsed | null {
     if (body.confirm !== true || !isRevision(body.expectedRevision)) return null
     return { kind: 'finalize', oscId, partnershipId, requestId, expectedRevision: body.expectedRevision }
   }
+  if (body.action === 'correct' && exactKeys(body, ['oscId', 'partnershipId', 'requestId', 'action', 'expectedRevision', 'changes', 'justification', 'declaration'])) {
+    // Conteúdo (campos, justificativa, declaração) é validado pelo domínio, com mensagens por campo.
+    if (!isRevision(body.expectedRevision)) return null
+    return { kind: 'correct', oscId, partnershipId, requestId, expectedRevision: body.expectedRevision, changes: body.changes, justification: body.justification, declaration: body.declaration }
+  }
   return null
 }
 
@@ -98,7 +109,7 @@ class Outcome extends Error {
     this.response = response
   }
 }
-const deny = (reason: WorkPlanDenial) => new Outcome(json(reason === 'already-finalized' ? 409 : 403, { error: 'forbidden', reason }))
+const deny = (reason: WorkPlanDenial) => new Outcome(json(reason === 'already-finalized' || reason === 'not-finalized' ? 409 : 403, { error: 'forbidden', reason }))
 
 function partnershipFacts(snap: DocumentSnapshot | undefined, oscId: string): PartnershipFacts | null {
   const d = snap?.exists ? snap.data() : undefined
@@ -145,8 +156,9 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
       const context: AuthorizationContext = { uid, oscId, organization: organizationFacts(oscSnap, oscId), membership: membershipFacts(actorSnap, oscId, uid) }
 
       // 1. Permissão antes de revelar se a parceria existe (conhecer um ID não autoriza nada).
-      const permission = request.kind === 'finalize' ? FINALIZE_PERMISSION : EDIT_PERMISSION
-      const base = evaluate(context, { kind: 'operate', permission })
+      //    DEC-PT-001: todas as gravações exigem `work-plan.edit` (o identificador descontinuado
+      //    `work-plan.finalize` é descartado na leitura do vínculo e nunca autoriza nada).
+      const base = evaluate(context, { kind: 'operate', permission: EDIT_PERMISSION })
       if (!base.allowed) throw deny(base.reason)
 
       // 2. Parceria da MESMA OSC (o caminho já isola; o documento é conferido).
@@ -165,6 +177,11 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         }
         if (request.kind === 'finalize' && registration === 'finalized' && planSnap.get('finalizationRequestId') === requestId && planSnap.get('finalizedBy') === uid) {
           return json(200, { ok: true, finalized: false, workPlan: summary })
+        }
+        if (request.kind === 'correct') {
+          // Evento com ID determinístico por usuário e pedido: marcador de idempotência e registro append-only.
+          const previous = await tx.get(events.doc(correctionEventId(uid, requestId)))
+          if (previous.exists) return json(200, { ok: true, corrected: false, workPlan: { ...summary, revision: previous.get('toRevision') as number } })
         }
       }
 
@@ -217,6 +234,37 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         return json(200, { ok: true, changed: true, workPlan: { id: ORIGINAL_WORK_PLAN_ID, revision: current + 1, registrationStatus: 'in-registration' } })
       }
 
+      if (request.kind === 'correct') {
+        const validation = validateCorrection(request, values, partnership, today)
+        if (!validation.ok) throw new Outcome(json(422, { error: 'invalid-correction', fields: validation.errors, ...(validation.pending ? { pending: validation.pending } : {}) }))
+        // Representação atual + evento append-only na MESMA transação. Finalização original intacta.
+        tx.update(planRef, {
+          ...Object.fromEntries(validation.items.map((item) => [`values.${item.field}`, item.after])),
+          revision: current + 1,
+          lastCorrectionAt: now,
+          lastCorrectionBy: uid,
+          correctionCount: FieldValue.increment(1),
+          updatedAt: now,
+          updatedBy: uid,
+        })
+        tx.create(events.doc(correctionEventId(uid, requestId)), {
+          action: 'material-correction',
+          oscId,
+          partnershipId,
+          workPlanId: ORIGINAL_WORK_PLAN_ID,
+          actorUid: uid,
+          actorAuthority: decision.authority,
+          requestId,
+          corrections: validation.items.map((item) => ({ field: item.field, before: item.before, after: item.after })),
+          justification: validation.justification,
+          declaration: { accepted: true, text: CORRECTION_DECLARATION, automatedVerification: false },
+          fromRevision: current,
+          toRevision: current + 1,
+          at: now,
+        })
+        return json(200, { ok: true, corrected: true, workPlan: { id: ORIGINAL_WORK_PLAN_ID, revision: current + 1, registrationStatus: 'finalized' }, warnings: validation.warnings })
+      }
+
       // Finalização interna (DEC-038): requisitos aprovados, autoria e preservação.
       const check = checkFinalization(values, partnership)
       if (check.pending.length > 0) throw new Outcome(json(422, { error: 'finalization-pending', pending: check.pending, warnings: check.warnings }))
@@ -238,10 +286,48 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
   }
 }
 
+export const correctionEventId = (uid: string, requestId: string) => `correction_${uid}_${requestId}`
+
+const MAX_HISTORY = 200
+
+/**
+ * Histórico de correções materiais (DEC-PT-002), servido SOMENTE pelo servidor: a auditoria é
+ * ilegível pelo navegador (Security Rules). Exige `work-plan.view` na OSC (mesma regra da
+ * consulta do Plano, inclusive na suspensão comercial) e parceria da própria OSC. O responsável
+ * é identificado apenas como "você" ou pela competência (sem e-mails de terceiros).
+ */
+async function history(deps: ServerDeps, uid: string, oscId: string, partnershipId: string): Promise<ApiResponse> {
+  const [oscSnap, actorSnap, partnershipSnap] = await deps.db.getAll(deps.db.doc(`oscs/${oscId}`), deps.db.doc(`oscs/${oscId}/members/${uid}`), deps.db.doc(`oscs/${oscId}/partnerships/${partnershipId}`))
+  const context: AuthorizationContext = { uid, oscId, organization: organizationFacts(oscSnap, oscId), membership: membershipFacts(actorSnap, oscId, uid) }
+  const decision = evaluate(context, { kind: 'consult', permission: VIEW_PERMISSION })
+  if (!decision.allowed) return json(403, { error: 'forbidden', reason: decision.reason })
+  if (!partnershipFacts(partnershipSnap, oscId)) return json(404, { error: 'not-found' })
+  const snapshot = await deps.db
+    .collection(`oscs/${oscId}/workPlanEvents`)
+    .where('partnershipId', '==', partnershipId)
+    .where('action', '==', 'material-correction')
+    .limit(MAX_HISTORY)
+    .get()
+  const entries = snapshot.docs
+    .map((d) => d.data())
+    .filter((e) => e.oscId === oscId && e.workPlanId === ORIGINAL_WORK_PLAN_ID)
+    .map((e) => ({
+      at: e.at && typeof e.at.toDate === 'function' ? (e.at.toDate() as Date).toISOString() : null,
+      actor: e.actorUid === uid ? 'you' : 'other',
+      actorAuthority: e.actorAuthority,
+      corrections: e.corrections,
+      justification: e.justification,
+      fromRevision: e.fromRevision,
+      toRevision: e.toRevision,
+    }))
+    .sort((a, b) => (a.toRevision as number) - (b.toRevision as number))
+  return json(200, { ok: true, partnershipId, workPlanId: ORIGINAL_WORK_PLAN_ID, entries })
+}
+
 /** Ponto de entrada independente de plataforma. */
 export async function handleWorkPlansRequest(request: ApiRequest, deps: ServerDeps | null, { today = serverToday() }: WorkPlansOptions = {}): Promise<ApiResponse> {
   if (deps === null) return json(503, { error: 'not-configured' })
-  if (request.method !== 'POST' && request.method !== 'PATCH') return json(405, { error: 'method-not-allowed' })
+  if (request.method !== 'POST' && request.method !== 'PATCH' && request.method !== 'GET') return json(405, { error: 'method-not-allowed' })
   const token = bearerToken(request.authorization)
   if (!token) return json(401, { error: 'invalid-token' })
   let uid: string
@@ -249,6 +335,19 @@ export async function handleWorkPlansRequest(request: ApiRequest, deps: ServerDe
     uid = (await deps.verifyIdToken(token)).uid
   } catch (error) {
     return json(401, { error: authErrorCode(error) })
+  }
+  if (request.method === 'GET') {
+    const oscId = request.query.get('oscId')
+    const partnershipId = request.query.get('partnershipId')
+    const keys = [...request.query.keys()]
+    if (!oscId || !partnershipId || !ID_PATTERN.test(oscId) || !ID_PATTERN.test(partnershipId) || keys.length !== 2) return json(400, { error: 'invalid-request' })
+    try {
+      return await history(deps, uid, oscId, partnershipId)
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown'
+      console.error(`[osc-work-plans] falha interna (${code})`)
+      return json(500, { error: 'internal' })
+    }
   }
   const parsed = parse(request.method, request.rawBody)
   if (!parsed) return json(400, { error: 'invalid-request' })

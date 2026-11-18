@@ -36,8 +36,12 @@ export type PermissionModuleId = (typeof PERMISSION_MODULES)[number]['id']
  * `grantable`: semântica determinada com segurança; pode ser concedida.
  * `pending-specification`: depende de especificação no Inventário Funcional V1.0;
  *   NÃO pode ser concedida nem verificada até ser especificada.
+ * `discontinued`: identificador já existente que deixou de ser competência (ex.: DEC-PT-001).
+ *   Permanece no catálogo apenas para documentação: não é concedível, é descartado na leitura
+ *   dos vínculos (`sanitizePermissions`) e NUNCA autoriza operações. Valores já gravados não são
+ *   convertidos nem apagados.
  */
-export type PermissionStatus = 'grantable' | 'pending-specification'
+export type PermissionStatus = 'grantable' | 'pending-specification' | 'discontinued'
 
 interface CatalogEntry {
   readonly id: string
@@ -63,12 +67,12 @@ export const PERMISSION_CATALOG = [
   { id: 'partnerships.create', module: 'partnerships', label: 'Cadastrar parcerias formalizadas', status: 'grantable' },
   { id: 'partnerships.edit', module: 'partnerships', label: 'Alterar dados cadastrais de parcerias', status: 'grantable' },
 
-  // DEV-02.2: `work-plan.edit` com a semântica homologada (HF-G05, permissão "Editar plano de
-  // trabalho" que habilita "Registrar Plano aprovado"), RESTRITA ao cadastro estruturado ainda não
-  // finalizado. A finalização interna (DEC-038) é competência própria. Nenhuma implica outra.
+  // DEC-PT-001 (DEV-02.2-C01, alternativa B): `work-plan.edit` é a competência ÚNICA para iniciar,
+  // alterar, finalizar internamente e corrigir erro material (DEC-PT-002) do cadastro estruturado.
+  // `view` e `edit` continuam independentes. `work-plan.finalize` foi DESCONTINUADA.
   { id: 'work-plan.view', module: 'work-plan', label: 'Consultar Planos de Trabalho', status: 'grantable' },
-  { id: 'work-plan.edit', module: 'work-plan', label: 'Registrar e alterar Plano de Trabalho não finalizado', status: 'grantable' },
-  { id: 'work-plan.finalize', module: 'work-plan', label: 'Finalizar internamente o cadastro do Plano de Trabalho', status: 'grantable' },
+  { id: 'work-plan.edit', module: 'work-plan', label: 'Registrar, finalizar e corrigir o Plano de Trabalho', status: 'grantable' },
+  { id: 'work-plan.finalize', module: 'work-plan', label: 'Finalizar internamente o cadastro do Plano de Trabalho (descontinuada)', status: 'discontinued' },
 
   { id: 'execution.view', module: 'execution', label: 'Consultar execução e monitoramento', status: 'grantable' },
   { id: 'execution.edit', module: 'execution', label: 'Registrar execução e monitoramento', status: 'pending-specification' },

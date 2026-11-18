@@ -22,3 +22,14 @@ export function valueFromForm(field: WorkPlanField, input: { text: string; na: b
   return { state: 'informed', value: text }
 }
 
+
+const NUMBER = new Intl.NumberFormat('pt-BR')
+
+/** Valor para exibição, com o estado de informação explícito (nunca "zero" para ausência). */
+export function displayValue(value: FieldValue, kind: string): string {
+  if (value.state === 'not-informed') return 'Não informado'
+  if (value.state === 'not-applicable') return 'Não se aplica'
+  if (kind === 'date') return String(value.value).split('-').reverse().join('/')
+  if (kind === 'integer') return NUMBER.format(Number(value.value))
+  return String(value.value)
+}

@@ -19,6 +19,8 @@ rules_version = '2';
 // DEV-02.2: exceção MÍNIMA de LEITURA para o Plano de Trabalho estruturado:
 //   oscs/{oscId}/partnerships/{id}/workPlans/{workPlanId} → get/list com canConsult(oscId, 'work-plan.view').
 //   Auditoria (workPlanEvents) ilegível; nenhuma escrita pelo cliente.
+// DEV-02.2-C01: SEM novas exceções. Correções materiais (DEC-PT-002) são gravadas e o histórico é
+//   consultado somente pelo servidor (/api/osc-work-plans), que exige 'work-plan.view'/'work-plan.edit'.
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo

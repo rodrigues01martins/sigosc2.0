@@ -230,25 +230,26 @@ export function checkFinalization(values: WorkPlanValues, partnership: Partnersh
 }
 
 // ---------------------------------------------------------------------------
-// Autorização (DEV-02.2 §10)
+// Autorização (DEV-02.2 §10; DEC-PT-001 e DEC-PT-002)
 // ---------------------------------------------------------------------------
 
 export const VIEW_PERMISSION = 'work-plan.view'
+/** DEC-PT-001: competência ÚNICA para iniciar, alterar, finalizar e corrigir erro material. */
 export const EDIT_PERMISSION = 'work-plan.edit'
-export const FINALIZE_PERMISSION = 'work-plan.finalize'
+/** Identificador DESCONTINUADO (DEC-PT-001): nunca autoriza operações; mantido só para documentação. */
+export const DISCONTINUED_FINALIZE_PERMISSION = 'work-plan.finalize'
 
-export type WorkPlanDenial = DenialReason | 'partnership-archived' | 'already-finalized'
+export type WorkPlanDenial = DenialReason | 'partnership-archived' | 'already-finalized' | 'not-finalized'
 export type WorkPlanDecision = { readonly allowed: true; readonly authority: Authority } | { readonly allowed: false; readonly reason: WorkPlanDenial }
 
-export type WorkPlanOperation = 'start' | 'update' | 'finalize'
+export type WorkPlanOperation = 'start' | 'update' | 'finalize' | 'correct'
 
 /**
- * Gravações do Plano:
- * - iniciar e alterar o cadastro em andamento → `work-plan.edit`;
- * - finalizar internamente → `work-plan.finalize` (nunca implícita em `edit`);
- * - todas negadas na suspensão comercial (avaliador) e em parceria ARQUIVADA
- *   (somente consulta); parceria suspensa ou encerrada não bloqueia (DEC-PAR-003);
- * - registro finalizado não admite alteração nem nova finalização.
+ * Gravações do Plano (todas exigem `work-plan.edit`; `view` não implica `edit` nem o inverso):
+ * - iniciar, alterar e finalizar → somente enquanto o cadastro NÃO estiver finalizado;
+ * - corrigir erro material (DEC-PT-002) → somente DEPOIS da finalização;
+ * - todas negadas na suspensão comercial (avaliador) e em parceria ARQUIVADA (somente consulta);
+ *   parceria suspensa ou encerrada não bloqueia (DEC-PAR-003).
  */
 export function decideWorkPlanOperation(
   context: AuthorizationContext,
@@ -256,10 +257,10 @@ export function decideWorkPlanOperation(
   partnershipStatus: AdministrativeStatus,
   registration: WorkPlanSituation,
 ): WorkPlanDecision {
-  const permission = operation === 'finalize' ? FINALIZE_PERMISSION : EDIT_PERMISSION
-  const decision = evaluate(context, { kind: 'operate', permission })
+  const decision = evaluate(context, { kind: 'operate', permission: EDIT_PERMISSION })
   if (!decision.allowed) return decision
   if (!allowsNewOperationalRecords(partnershipStatus)) return { allowed: false, reason: 'partnership-archived' }
+  if (operation === 'correct') return registration === 'finalized' ? decision : { allowed: false, reason: 'not-finalized' }
   if (registration === 'finalized') return { allowed: false, reason: 'already-finalized' }
   return decision
 }
@@ -268,5 +269,106 @@ export const WORK_PLAN_MESSAGE: Partial<Record<WorkPlanDenial, string>> = {
   'commercial-suspension': 'A OSC está com a situação comercial suspensa. Novos registros estão bloqueados.',
   'partnership-archived': 'Parceria arquivada: o Plano de Trabalho está disponível somente para consulta.',
   'already-finalized':
-    'O cadastro estruturado já foi finalizado internamente e está preservado. Alterações dependem do versionamento formal (incremento futuro).',
+    'O cadastro estruturado já foi finalizado internamente e está preservado. Edições comuns não são possíveis; use a correção de erro material, quando cabível. Alterações formais dependem do versionamento (incremento futuro).',
+  'not-finalized': 'A correção de erro material só se aplica a Plano finalizado. Enquanto em cadastramento, use a edição comum.',
+}
+
+// ---------------------------------------------------------------------------
+// Correção de erro material (DEC-PT-002)
+// ---------------------------------------------------------------------------
+
+/** Declaração exigida do usuário (registrada na auditoria; NÃO é validação automatizada). */
+export const CORRECTION_DECLARATION =
+  'Declaro que esta correção corresponde à informação constante do Plano de Trabalho efetivamente aprovado, não representando alteração formal de seu conteúdo.'
+
+export const JUSTIFICATION_LIMITS = { min: 10, max: 2000 } as const
+
+export interface CorrectionItem {
+  readonly field: WorkPlanField
+  readonly before: FieldValue
+  readonly after: FieldValue
+}
+
+export type CorrectionErrorCode =
+  | FieldErrorCode
+  | 'required'
+  | 'no-change'
+  | 'justification-required'
+  | 'justification-too-short'
+  | 'justification-too-long'
+  | 'declaration-required'
+  | 'breaks-finalization'
+
+/** `correctionReason` = justificativa da correção (distinta do CAMPO `justification` do Plano). */
+export type CorrectionErrorKey = WorkPlanField | 'changes' | 'correctionReason' | 'declaration'
+
+export type CorrectionValidation =
+  | { readonly ok: true; readonly items: readonly CorrectionItem[]; readonly justification: string; readonly warnings: readonly string[] }
+  | { readonly ok: false; readonly errors: Partial<Record<CorrectionErrorKey, CorrectionErrorCode>>; readonly pending?: readonly string[] }
+
+/** Normaliza a justificativa (texto significativo, sem caracteres de controle). */
+export function cleanJustification(raw: unknown): { value: string | null; error: CorrectionErrorCode | null } {
+  if (typeof raw !== 'string') return { value: null, error: 'justification-required' }
+  const text = raw.trim().replace(/[ \t]+/g, ' ')
+  if (text.length === 0) return { value: null, error: 'justification-required' }
+  if (CONTROL.test(text.replace(/[\n\r]/g, ' '))) return { value: null, error: 'invalid' }
+  // "Significativo": ao menos o mínimo de caracteres não brancos.
+  if (text.replace(/\s/g, '').length < JUSTIFICATION_LIMITS.min) return { value: null, error: 'justification-too-short' }
+  if (text.length > JUSTIFICATION_LIMITS.max) return { value: null, error: 'justification-too-long' }
+  return { value: text, error: null }
+}
+
+/**
+ * Valida uma correção material: campos permitidos e válidos (mesmas regras do cadastro), ao
+ * menos um valor efetivamente diferente, justificativa significativa, declaração aceita e
+ * resultado ainda compatível com os requisitos de finalização (o Plano continua finalizado).
+ */
+export function validateCorrection(
+  input: { changes: unknown; justification: unknown; declaration: unknown },
+  current: WorkPlanValues,
+  partnership: PartnershipFacts,
+  today: string,
+): CorrectionValidation {
+  const errors: Partial<Record<CorrectionErrorKey, CorrectionErrorCode>> = {}
+  const changes = typeof input.changes === 'object' && input.changes !== null && !Array.isArray(input.changes) ? (input.changes as Record<string, unknown>) : null
+  let items: CorrectionItem[] = []
+  if (!changes) errors.changes = 'required'
+  else {
+    const validation = validateChanges(changes, current, today)
+    if (!validation.ok) Object.assign(errors, validation.errors)
+    else {
+      items = (Object.entries(validation.changes) as [WorkPlanField, FieldValue][])
+        .filter(([field, after]) => JSON.stringify(current[field]) !== JSON.stringify(after))
+        .map(([field, after]) => ({ field, before: current[field], after }))
+      if (items.length === 0) errors.changes = 'no-change'
+    }
+  }
+  const justification = cleanJustification(input.justification)
+  if (justification.error) errors.correctionReason = justification.error
+  if (input.declaration !== true) errors.declaration = 'declaration-required'
+  if (Object.keys(errors).length > 0) return { ok: false, errors }
+
+  const merged = { ...current, ...Object.fromEntries(items.map((i) => [i.field, i.after])) } as WorkPlanValues
+  const check = checkFinalization(merged, partnership)
+  if (check.pending.length > 0) return { ok: false, errors: { changes: 'breaks-finalization' }, pending: check.pending }
+  return { ok: true, items, justification: justification.value as string, warnings: check.warnings }
+}
+
+export function correctionErrorMessage(code: CorrectionErrorCode): string {
+  switch (code) {
+    case 'no-change':
+      return 'Nenhum valor foi efetivamente alterado.'
+    case 'justification-required':
+      return 'Informe a justificativa da correção.'
+    case 'justification-too-short':
+      return `A justificativa deve ter ao menos ${JUSTIFICATION_LIMITS.min} caracteres significativos.`
+    case 'justification-too-long':
+      return `A justificativa deve ter no máximo ${JUSTIFICATION_LIMITS.max} caracteres.`
+    case 'declaration-required':
+      return 'Confirme a declaração de correspondência ao Plano aprovado.'
+    case 'breaks-finalization':
+      return 'A correção deixaria o Plano sem os requisitos da finalização (campos obrigatórios ou período coerente).'
+    default:
+      return fieldErrorMessage(code)
+  }
 }

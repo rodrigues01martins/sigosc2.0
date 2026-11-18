@@ -12,7 +12,6 @@ import {
   WORK_PLAN_MESSAGE,
   checkFinalization,
   decideWorkPlanOperation,
-  type FieldValue,
   type WorkPlanDecision,
   type WorkPlanSituation,
 } from '../../../domain/workPlans.ts'
@@ -21,9 +20,11 @@ import { useWorkPlanDependencies } from '../../../hooks/workPlansContext.ts'
 import type { Partnership, PartnershipErrorKind } from '../../../services/partnerships/types.ts'
 import type { WorkPlan } from '../../../services/workPlans/types.ts'
 import styles from '../partnerships/Partnerships.module.css'
-import { PARTNERSHIP_LOAD_ERROR, formatDate, formatTerm, formatTimestamp } from '../partnerships/format.ts'
+import { PARTNERSHIP_LOAD_ERROR, formatTerm, formatTimestamp } from '../partnerships/format.ts'
 import { PartnershipStatus } from '../partnerships/PartnershipStatus.tsx'
-import type { FormState } from './form.ts'
+import { displayValue, type FormState } from './form.ts'
+import { CorrectionHistory } from './CorrectionHistory.tsx'
+import { WorkPlanCorrection } from './WorkPlanCorrection.tsx'
 import { WorkPlanEditor } from './WorkPlanEditor.tsx'
 
 interface Props {
@@ -41,16 +42,6 @@ type State =
   | { status: 'error'; error: PartnershipErrorKind }
   | { status: 'not-found' }
   | { status: 'ready'; partnership: Partnership; plan: WorkPlan | null; planAllowed: boolean }
-
-const NUMBER = new Intl.NumberFormat('pt-BR')
-
-function display(value: FieldValue, kind: string): string {
-  if (value.state === 'not-informed') return 'Não informado'
-  if (value.state === 'not-applicable') return 'Não se aplica'
-  if (kind === 'date') return formatDate(String(value.value))
-  if (kind === 'integer') return NUMBER.format(Number(value.value))
-  return String(value.value)
-}
 
 function denialText(decision: Extract<WorkPlanDecision, { allowed: false }>, missing: string): string {
   if (decision.reason === 'permission-not-granted') return missing
@@ -99,6 +90,8 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const [dirty, setDirty] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [correcting, setCorrecting] = useState(false)
+  const [historyKey, setHistoryKey] = useState(0)
   const requestIds = useRef({ start: globalThis.crypto.randomUUID(), finalize: globalThis.crypto.randomUUID() })
   const callbacks = useRef({ onResolved, onNotFound })
   useEffect(() => {
@@ -173,6 +166,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const start = decideWorkPlanOperation(context, 'start', p.administrativeStatus, situation)
   const edit = decideWorkPlanOperation(context, 'update', p.administrativeStatus, situation)
   const finalize = decideWorkPlanOperation(context, 'finalize', p.administrativeStatus, situation)
+  const correction = decideWorkPlanOperation(context, 'correct', p.administrativeStatus, situation)
   const facts = { instrument: p.instrument, termStart: p.termStart, termEnd: p.termEnd, formalizationDate: p.formalizationDate, administrativeStatus: p.administrativeStatus, workPlanApprovalDeclared: p.workPlanApprovalDeclared }
   const check = plan ? checkFinalization(plan.values, facts) : null
   const who = (uid: string | null) => (uid && uid === context.uid ? ' · por você' : '')
@@ -394,7 +388,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
                   </div>
                 )
               ) : (
-                <p className={styles.hint}>{denialText(finalize, 'A finalização interna exige a permissão “Finalizar internamente o cadastro do Plano de Trabalho”.')}</p>
+                <p className={styles.hint}>{denialText(finalize, 'A finalização interna exige a permissão “Registrar, finalizar e corrigir o Plano de Trabalho”.')}</p>
               )}
             </section>
           ) : null}
@@ -404,11 +398,36 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
               <InfoIcon />
               <span>
                 Cadastro finalizado internamente em {formatTimestamp(plan.finalizedAt)}
-                {who(plan.finalizedBy)}. O registro está preservado; não representa aprovação jurídica. Correções e alterações formais dependem
-                do versionamento, ainda não disponível.
+                {who(plan.finalizedBy)}. O registro está preservado e não representa aprovação jurídica. Erros materiais de registro podem ser
+                corrigidos com justificativa e ficam no histórico; alterações formais dependem do versionamento, ainda não disponível.
               </span>
             </p>
           ) : null}
+
+          {plan.registrationStatus === 'finalized' && correction.allowed ? (
+            correcting ? (
+              <WorkPlanCorrection
+                plan={plan}
+                partnership={facts}
+                onCancel={() => setCorrecting(false)}
+                onCorrected={(warnings) => {
+                  setCorrecting(false)
+                  setNotice({ kind: 'success', text: `Correção de erro material registrada. Os valores anteriores estão preservados no histórico.${warnings.length ? ` Pontos de conferência: ${warnings.join(' ')}` : ''}` })
+                  setHistoryKey((n) => n + 1)
+                  refresh()
+                }}
+                onStale={refresh}
+              />
+            ) : (
+              <span className={styles.touch}>
+                <button type="button" className={ds.secondary} onClick={() => { setNotice(null); setCorrecting(true) }}>
+                  Corrigir erro material
+                </button>
+              </span>
+            )
+          ) : null}
+
+          {plan.registrationStatus === 'finalized' ? <CorrectionHistory oscId={context.oscId} partnershipId={partnershipId} refreshKey={historyKey} /> : null}
         </>
       )}
     </>
@@ -428,7 +447,7 @@ function WorkPlanView({ plan, who }: { plan: WorkPlan; who(uid: string | null): 
             {FIELDS.filter((f) => f.group === group.id).map((f) => (
               <div key={f.id} className={f.kind === 'text' && (f.max ?? 0) > 1000 ? styles.wide : undefined}>
                 <dt>{f.label}</dt>
-                <dd>{display(plan.values[f.id], f.kind)}</dd>
+                <dd>{displayValue(plan.values[f.id], f.kind)}</dd>
               </div>
             ))}
           </dl>

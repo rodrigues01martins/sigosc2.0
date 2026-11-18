@@ -13,6 +13,7 @@ import { OSCS, USERS } from '../../../../tests/support/organizationFixtures.ts'
 import { PERMISSION_USERS } from '../../../../tests/support/permissionFixtures.ts'
 import { renderOscApp } from '../../../../tests/support/renderOscApp.tsx'
 import { GRANTABLE_PERMISSIONS, permissionLabel } from '../../../domain/authorization.ts'
+import { directoryToCsv } from '../../Permissions/exportCsv.ts'
 
 const originalMatchMedia = window.matchMedia
 afterEach(() => {
@@ -66,6 +67,28 @@ describe('Estrutura da matriz', () => {
     // DEC-PAR-001 aprovou o cadastro de parcerias; as demais permissões do protótipo antigo continuam fora.
     expect(headers.join(' ')).not.toMatch(/Editar plano|Registrar e editar receitas|Convidar usuários/)
     expect(headers.filter((h) => h.includes('Gestão de parcerias'))).toHaveLength(3)
+  })
+})
+
+describe('DEV-02.2-C01 — DEC-PT-001 na matriz', () => {
+  it('DEV-02.2-C01-T06/T07 — Plano de Trabalho com view e edit; finalize descontinuada fora da matriz e do CSV, sem conceder nada', async () => {
+    const { server } = await openMatrix(USERS.MULTI, {
+      prepare: (db) => {
+        // Vínculo com o identificador descontinuado gravado (compatibilidade histórica).
+        const path = `oscs/osc-alfa/members/${OPERATOR.uid}`
+        db.docs.set(path, { ...db.docs.get(path), permissions: ['partnerships.view', 'work-plan.finalize'] })
+      },
+    })
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '')
+    expect(headers.filter((h) => h.includes('Plano de Trabalho'))).toHaveLength(2)
+    expect(headers.some((h) => h.includes('Registrar, finalizar e corrigir o Plano de Trabalho'))).toBe(true)
+    expect(headers.join(' ')).not.toMatch(/Finalizar internamente/)
+    expect(cell('Registrar, finalizar e corrigir o Plano de Trabalho', OPERATOR.email).getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(cell('Registrar, finalizar e corrigir o Plano de Trabalho', OPERATOR.email))
+    await waitFor(() => expect(cell('Registrar, finalizar e corrigir o Plano de Trabalho', OPERATOR.email).getAttribute('aria-pressed')).toBe('true'))
+    expect(truth(server, OPERATOR.uid)?.permissions).toContain('work-plan.edit')
+    const directory = await server.apiFor(() => USERS.MULTI.uid).listMembers('osc-alfa')
+    expect(directory.ok && directoryToCsv(directory.data).split('\n')[0]).not.toContain('work-plan.finalize')
   })
 })
 

@@ -431,7 +431,7 @@ IDs estáveis `modulo.capacidade`. Não existem IDs genéricos (`admin`, `all`, 
 | --- | --- | --- |
 | Gestão de usuários e permissões | — (gestão é competência do administrador/delegado) | `users.invite` |
 | Gestão de parcerias | `partnerships.view`, `partnerships.create`, `partnerships.edit` (DEC-PAR-001) | — |
-| Plano de Trabalho | `work-plan.view`, `work-plan.edit` (cadastro não finalizado), `work-plan.finalize` (DEV-02.2) | — |
+| Plano de Trabalho | `work-plan.view`, `work-plan.edit` (iniciar, editar, finalizar e corrigir — DEC-PT-001); `work-plan.finalize` descontinuada | — |
 | Execução e Monitoramento | `execution.view` | `execution.edit` |
 | Gestão Financeira | `financial.view` | `financial.edit` |
 | Gestão Documental | `documents.view` | `documents.edit` |
@@ -856,18 +856,81 @@ inícios simultâneos colidindo no mesmo documento (um só registro). Isolamento
 - Neste incremento: nenhuma versão é criada; edição comum não gera versão; prorrogação não toca o Plano;
   registro finalizado não é sobrescrito.
 
-### 11.5 Permissões (catálogo)
+### 11.5 Permissões (catálogo) — DEC-PT-001 (alternativa B)
 
-| Operação | Permissão | Observação |
-| --- | --- | --- |
-| Consultar o Plano | `work-plan.view` | Navegar até ele exige também `partnerships.view` (seleção da parceria) |
-| Iniciar e alterar o cadastro **não finalizado** | `work-plan.edit` | Semântica homologada (HF-G05: "Editar plano de trabalho" → "Registrar Plano aprovado"), restrita ao cadastro em andamento; rótulo atualizado |
-| Finalizar internamente | `work-plan.finalize` (**nova**) | DEC-038; competência própria, não implícita em `edit` |
+| Operação | Permissão |
+| --- | --- |
+| Consultar o Plano e o histórico de correções | `work-plan.view` |
+| Iniciar o cadastro | `work-plan.edit` |
+| Editar o cadastro em andamento | `work-plan.edit` |
+| Finalizar internamente (com confirmação explícita) | `work-plan.edit` |
+| Corrigir erro material após a finalização (DEC-PT-002) | `work-plan.edit` |
 
-Concedidas uma a uma pela matriz da UX-001. Nenhuma concessão automática; administrador sem permissões
-implícitas; DEC-PAR-002, proibição de autoconcessão e delegação sem subdelegação preservadas.
-**Decisão técnica a confirmar (não impeditiva):** separar finalização de edição (no protótipo, ambas
-estavam sob "Editar plano de trabalho"). Para unificar, basta conceder as duas.
+`view` e `edit` são independentes (nenhuma implica a outra); navegar até o Plano exige também
+`partnerships.view`. Rótulo de `work-plan.edit`: "Registrar, finalizar e corrigir o Plano de Trabalho".
+
+**`work-plan.finalize` — DESCONTINUADA.** Permanece no catálogo com `status: 'discontinued'`, apenas para
+documentação. Não é concedível (nem na matriz, nem na API de permissões), não aparece no CSV e é
+**descartada na leitura** de qualquer vínculo (`sanitizePermissions`), portanto nunca autoriza operações.
+Valores já gravados **não são convertidos** em `work-plan.edit` nem apagados: ficam inertes no documento.
+No código e nos dados de teste versionados não há vínculos com o identificador; o Firebase de testes não
+pode ser inspecionado daqui (se houver, continuam inertes). Administrador sem permissões implícitas e
+DEC-PAR-002 preservados.
+
+### 11.6-A Correção de erro material — DEC-PT-002 (alternativa A)
+
+**Conceito.** *Correção material*: ajuste de informação registrada incorretamente no SIGOSC em relação ao
+Plano formalmente aprovado. *Alteração formal*: modificação do próprio Plano aprovado (procedimento
+administrativo e versionamento futuro) — **não** disponível.
+
+**Contrato** (`POST /api/osc-work-plans`, mantendo as operações existentes):
+
+```json
+{ "oscId": "…", "partnershipId": "…", "requestId": "uuid", "action": "correct",
+  "expectedRevision": 3,
+  "changes": { "approvalDate": { "state": "informed", "value": "2026-02-15" } },
+  "justification": "Data transcrita incorretamente do Plano aprovado.",
+  "declaration": true }
+```
+
+Respostas: 200 `{corrected: true, workPlan: {revision}}`; 200 `{corrected: false}` (reenvio do mesmo
+pedido); 403 (sem `work-plan.edit`, suspensão comercial, parceria arquivada, sem vínculo); 404 (parceria
+fora da OSC); 409 `not-finalized` | `stale`; 422 `invalid-correction` com `fields` (`correctionReason` =
+justificativa, `declaration`, campos do Plano, `changes: no-change | breaks-finalization`).
+
+**Regras.** Somente Plano **finalizado**, parceria não arquivada, OSC ativa e sem suspensão comercial,
+vínculo ativo com `work-plan.edit`. Apenas os campos estruturados do Plano (mesmas validações do
+cadastro); um ou mais campos por correção; valor idêntico recusado; justificativa com ao menos 10
+caracteres significativos (máx. 2000); declaração obrigatória ("Declaro que esta correção corresponde à
+informação constante do Plano de Trabalho efetivamente aprovado, não representando alteração formal de seu
+conteúdo."), registrada como **declaração do usuário** (`automatedVerification: false`). A correção não pode
+deixar o Plano sem os requisitos da finalização. **Não** altera: OSC, parceria, identidade e origem do
+Plano, autoria e data de criação, data/autor/pedido da finalização, `registrationStatus` (continua
+`finalized`), declaração de aprovação. Não cria versão.
+
+**Armazenamento (append-only).** Na mesma transação: o Plano recebe os valores corrigidos (`values`),
+`revision + 1`, `lastCorrectionAt/By`, `correctionCount`; e é criado o evento
+`oscs/{oscId}/workPlanEvents/correction_{uid}_{requestId}`:
+
+```
+action 'material-correction', oscId, partnershipId, workPlanId, actorUid, actorAuthority, requestId,
+corrections [{ field, before {state, value?}, after {state, value?} }], justification,
+declaration { accepted: true, text, automatedVerification: false }, fromRevision, toRevision, at (servidor)
+```
+
+O ID determinístico do evento é o marcador de idempotência: reenvios (inclusive simultâneos) do mesmo
+pedido não duplicam a correção; correções concorrentes com a mesma revisão → uma vence, a outra recebe
+`stale`. Eventos nunca são alterados ou excluídos; o evento de finalização original permanece.
+
+**Histórico.** `GET /api/osc-work-plans?oscId=…&partnershipId=…` — somente pelo servidor (a auditoria
+continua **ilegível pelo navegador** nas Security Rules), com `work-plan.view` na OSC (suspensão
+comercial: só o administrador com a permissão) e parceria da própria OSC. Lista só correções materiais,
+em ordem de revisão, com data, responsável ("você" ou a competência: Administrador único, Delegado,
+Operacional — sem UID/e-mail de terceiros), campo, valor anterior, valor corrigido e justificativa.
+
+**Registros futuros.** Execução, indicadores e finanças deverão gravar `workPlanId` e a `revision` do Plano
+vigente no momento do registro. Uma correção posterior é identificável comparando essa revisão com
+`toRevision` dos eventos `material-correction`; nenhuma reconciliação automática é feita.
 
 ### 11.6 Servidor (`/api/osc-work-plans`) e regras
 
@@ -887,8 +950,7 @@ vinculação futura, sem dependência de arquivo inexistente.
 
 ### 11.8 Pendências
 
-- **Correção de erro material em registro finalizado:** bloqueada; requer decisão (fluxo de retificação ou
-  nova versão).
+- Correção de erro material: **resolvida pela DEC-PT-002** (11.6-A).
 - Texto integral das decisões DEC-006/032–039 e Inventário FUN: não localizados; campos **T** a confirmar.
 - Metas, indicadores, fórmulas, planejamento financeiro, versões e alterações formais: incrementos futuros.
 - Armazenamento documental (Storage) e permissões do administrador pela Administração da Plataforma.
@@ -899,9 +961,11 @@ vinculação futura, sem dependência de arquivo inexistente.
    nenhuma escrita pelo cliente; sem índices novos.
 2. A função `/api/osc-work-plans` usa as mesmas variáveis da 8.7; conferir 401 sem token.
 3. Pela matriz, conceder a um usuário operacional: "Consultar parcerias da OSC", "Consultar Planos de
-   Trabalho", "Registrar e alterar Plano de Trabalho não finalizado" e "Finalizar internamente…".
-4. Selecionar uma parceria → "Plano de Trabalho" → iniciar, preencher, salvar e finalizar; conferir
-   `workPlans/original` e `workPlanEvents`. Os dados são reais no ambiente de testes (use conteúdo
+   Trabalho" e "Registrar, finalizar e corrigir o Plano de Trabalho".
+4. Selecionar uma parceria → "Plano de Trabalho" → iniciar, preencher, salvar e finalizar; depois
+   "Corrigir erro material" (campo, valor correto, justificativa, declaração, revisar, confirmar) e
+   conferir o histórico; no Console, `workPlans/original` e `workPlanEvents` (evento
+   `correction_{uid}_{requestId}`). Os dados são reais no ambiente de testes (use conteúdo
    fictício); reversão: excluir o documento do Plano e os eventos.
 
 ## 12. Publicação na Vercel
@@ -934,7 +998,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Regras Multi-Tenant de leitura | Implementadas e testadas em emulador; **publicação no Firebase de testes pendente** |
 | Permissões individuais, delegação, suspensão comercial (DEV-01.3) | Implementado e testado em emuladores; **operações de servidor não configuradas** no Preview |
 | Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
-| Plano de Trabalho: cadastro estruturado, consulta e finalização interna (DEV-02.2) | Implementado; validado em emuladores; **não validado no Preview** |
+| Plano de Trabalho: cadastro estruturado, consulta, finalização interna e correção de erro material (DEV-02.2 e C01) | Implementado; validado em emuladores; **não validado no Preview** |
 | Versões do Plano, metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
