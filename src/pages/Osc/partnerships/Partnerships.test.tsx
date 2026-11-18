@@ -337,8 +337,10 @@ describe('DEV-02.1-C01 — cadastro real na interface (servidor simulado; autori
     fireEvent.click(screen.getByRole('button', { name: 'Salvar correção' }))
     expect((await screen.findByRole('alert')).textContent).toMatch(/alterada por outra pessoa/)
     expect((screen.getByLabelText('Objeto (descrição resumida)') as HTMLTextAreaElement).value).toBe('Minha correção.')
-    fireEvent.click(screen.getByRole('button', { name: 'Salvar correção' }))
+    // Novo envio só depois da recarga (sem conflito repetido com a revisão antiga).
+    fireEvent.click(await screen.findByRole('button', { name: 'Salvar correção' }))
     await waitFor(() => expect(partnerships.updates.at(-1)?.expectedRevision).toBe(2))
+    expect(partnerships.updates.filter((u) => u.expectedRevision === 1)).toHaveLength(1)
   })
 })
 

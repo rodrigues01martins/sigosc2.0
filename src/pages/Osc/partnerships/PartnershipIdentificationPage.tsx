@@ -29,6 +29,8 @@ interface Props {
   /** A parceria não existe nesta OSC (ou o identificador é inválido): o contexto é limpo. */
   onNotFound(): void
   onBack(): void
+  /** DEV-02.2: acesso direto ao Plano de Trabalho da parceria (PAG-OSC05). */
+  onOpenWorkPlan?(): void
 }
 
 type State =
@@ -72,7 +74,7 @@ export function PartnershipIdentificationPage(props: Props) {
   return <Identification {...props} />
 }
 
-function Identification({ context, oscName, partnershipId, partnershipLabel, onResolved, onNotFound, onBack }: Props) {
+function Identification({ context, oscName, partnershipId, partnershipLabel, onResolved, onNotFound, onBack, onOpenWorkPlan }: Props) {
   const { service } = usePartnershipDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
@@ -169,6 +171,13 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
           <strong>Parceria arquivada.</strong>&nbsp;Consulta preservada; novos registros e alterações estão bloqueados. O desarquivamento
           compete exclusivamente à Administração da Plataforma.
         </p>
+      ) : null}
+      {onOpenWorkPlan ? (
+        <nav aria-label="Páginas da parceria" className={styles.touch}>
+          <button type="button" className={ds.secondary} onClick={onOpenWorkPlan}>
+            Plano de Trabalho
+          </button>
+        </nav>
       ) : null}
       {saved ? (
         <p className={ds.success} role="status">

@@ -63,8 +63,12 @@ export const PERMISSION_CATALOG = [
   { id: 'partnerships.create', module: 'partnerships', label: 'Cadastrar parcerias formalizadas', status: 'grantable' },
   { id: 'partnerships.edit', module: 'partnerships', label: 'Alterar dados cadastrais de parcerias', status: 'grantable' },
 
+  // DEV-02.2: `work-plan.edit` com a semântica homologada (HF-G05, permissão "Editar plano de
+  // trabalho" que habilita "Registrar Plano aprovado"), RESTRITA ao cadastro estruturado ainda não
+  // finalizado. A finalização interna (DEC-038) é competência própria. Nenhuma implica outra.
   { id: 'work-plan.view', module: 'work-plan', label: 'Consultar Planos de Trabalho', status: 'grantable' },
-  { id: 'work-plan.edit', module: 'work-plan', label: 'Elaborar e editar Planos de Trabalho', status: 'pending-specification' },
+  { id: 'work-plan.edit', module: 'work-plan', label: 'Registrar e alterar Plano de Trabalho não finalizado', status: 'grantable' },
+  { id: 'work-plan.finalize', module: 'work-plan', label: 'Finalizar internamente o cadastro do Plano de Trabalho', status: 'grantable' },
 
   { id: 'execution.view', module: 'execution', label: 'Consultar execução e monitoramento', status: 'grantable' },
   { id: 'execution.edit', module: 'execution', label: 'Registrar execução e monitoramento', status: 'pending-specification' },

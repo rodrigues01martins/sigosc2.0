@@ -55,6 +55,9 @@ export function PartnershipEditForm({ partnership, onCancel, onSaved, onStale }:
   const [errors, setErrors] = useState<Partial<Record<EditableField | 'changes', DraftErrorCode>>>({})
   const [failure, setFailure] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Após um conflito, aguarda a revisão recarregada antes de permitir novo envio.
+  const [staleRevision, setStaleRevision] = useState<number | null>(null)
+  const reloading = staleRevision !== null && staleRevision === partnership.revision
   const [requestId] = useState(() => globalThis.crypto.randomUUID())
   const inflight = useRef(false)
   const alertRef = useRef<HTMLDivElement>(null)
@@ -62,7 +65,7 @@ export function PartnershipEditForm({ partnership, onCancel, onSaved, onStale }:
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (inflight.current) return
+    if (inflight.current || reloading) return
     setFailure(null)
     // Somente campos efetivamente alterados são enviados.
     const changes: PartnershipChanges = {}
@@ -97,6 +100,7 @@ export function PartnershipEditForm({ partnership, onCancel, onSaved, onStale }:
       return
     }
     if (result.error === 'stale') {
+      setStaleRevision(partnership.revision)
       setFailure('A parceria foi alterada por outra pessoa desde a sua consulta. Os dados foram recarregados; revise e salve novamente.')
       onStale()
     } else if (result.error === 'forbidden' && result.reason) {
@@ -169,8 +173,8 @@ export function PartnershipEditForm({ partnership, onCancel, onSaved, onStale }:
           ))}
         </div>
         <div className={styles.actions}>
-          <button type="submit" className={ds.primary} disabled={saving} aria-busy={saving}>
-            {saving ? 'Salvando…' : 'Salvar correção'}
+          <button type="submit" className={ds.primary} disabled={saving || reloading} aria-busy={saving || reloading}>
+            {saving ? 'Salvando…' : reloading ? 'Recarregando…' : 'Salvar correção'}
           </button>
           <button type="button" className={ds.linkButton} onClick={onCancel} disabled={saving}>
             Cancelar

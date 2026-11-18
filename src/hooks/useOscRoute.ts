@@ -8,11 +8,11 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
  * da parceria é SEMPRE consultado sob a OSC ativa (as Security Rules decidem).
  */
 export const OSC_ROUTES = ['identificacao', 'parcerias', 'usuarios'] as const
-export type OscRoute = (typeof OSC_ROUTES)[number] | 'parceria'
+export type OscRoute = (typeof OSC_ROUTES)[number] | 'parceria' | 'plano'
 
 export interface OscLocation {
   readonly route: OscRoute
-  /** Somente na rota `parceria`; texto bruto da URL (validado pela consulta). */
+  /** Somente nas rotas `parceria` e `plano`; texto bruto da URL (validado pela consulta). */
   readonly partnershipId: string | null
 }
 
@@ -21,6 +21,17 @@ function readHash(): string {
 }
 
 export function parseLocation(hash: string): OscLocation {
+  // DEV-02.2: `#/parcerias/{id}/plano` — Plano de Trabalho da parceria (PAG-OSC05).
+  const plan = /^parcerias\/([^/]+)\/plano$/.exec(hash)
+  if (plan) {
+    let id: string
+    try {
+      id = decodeURIComponent(plan[1] as string)
+    } catch {
+      id = ''
+    }
+    return { route: 'plano', partnershipId: id }
+  }
   const detail = /^parcerias\/([^/]+)$/.exec(hash)
   if (detail) {
     let id: string
@@ -44,7 +55,12 @@ export function useOscRoute(): [OscLocation, (route: OscRoute, partnershipId?: s
   const hash = useSyncExternalStore(subscribe, readHash, () => '')
   const location = useMemo(() => parseLocation(hash), [hash])
   const navigate = useCallback((next: OscRoute, partnershipId?: string) => {
-    const target = next === 'parceria' && partnershipId ? `parcerias/${encodeURIComponent(partnershipId)}` : next === 'parceria' ? 'parcerias' : next
+    const target =
+      (next === 'parceria' || next === 'plano') && partnershipId
+        ? `parcerias/${encodeURIComponent(partnershipId)}${next === 'plano' ? '/plano' : ''}`
+        : next === 'parceria' || next === 'plano'
+          ? 'parcerias'
+          : next
     if (readHash() !== target || globalThis.location.hash === '') globalThis.location.hash = `/${target}`
   }, [])
   return [location, navigate]

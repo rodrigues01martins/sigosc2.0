@@ -9,6 +9,7 @@ import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebas
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath } from '../support/organizationFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
 import { partnershipDocument } from '../support/partnershipFixtures.ts'
+import { workPlanDocument, workPlanPath } from '../support/workPlanFixtures.ts'
 import { createTestEnvironment } from './setup.ts'
 
 const ALFA = OSCS.ALFA.id
@@ -98,6 +99,38 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(db.doc(alfaPath).update({ object: 'alterado' }))
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipRequests/${operator}_pedido-1`).get())
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipRequests/${operator}_pedido-2`).set({ partnershipId: 'x' }))
+  })
+
+  test('DEV-02.2-T01/T02 (regra) — Plano: leitura só com work-plan.view, na própria OSC; nenhuma escrita', async () => {
+    const alfaPlan = workPlanPath(ALFA, 'parceria-alfa-1')
+    const gamaPlan = workPlanPath(GAMA, 'parceria-gama-1')
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const db = admin.firestore()
+      await db.doc(alfaPlan).set(workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1' }))
+      await db.doc(gamaPlan).set(workPlanDocument({ oscId: GAMA, partnershipId: 'parceria-gama-1' }))
+      await db.doc(`oscs/${ALFA}/workPlanEvents/e1`).set({ action: 'start' })
+      await db.doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit', 'work-plan.finalize'] })
+      await db.doc(memberPath({ oscId: GAMA, uid: USERS.SINGLE.uid })).update({ permissions: ['partnerships.view', 'work-plan.view'] })
+    })
+    // Operador só com partnerships.view: não lê o Plano (competências independentes).
+    await assertFails(as(operator).doc(alfaPlan).get())
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(alfaPlan).get())
+    await assertSucceeds(delegate.collection(`oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans`).get())
+    await assertFails(delegate.doc(gamaPlan).get()) // outra OSC
+    await assertFails(delegate.collectionGroup('workPlans').get())
+    // edit/finalize não liberam escrita direta (somente servidor).
+    await assertFails(delegate.doc(alfaPlan).update({ registrationStatus: 'finalized' }))
+    await assertFails(delegate.doc(workPlanPath(ALFA, 'parceria-alfa-1').replace('original', 'outro')).set({ ok: true }))
+    await assertFails(delegate.doc(alfaPlan).delete())
+    await assertFails(delegate.doc(`oscs/${ALFA}/workPlanEvents/e1`).get())
+    await assertSucceeds(as(USERS.SINGLE.uid).doc(gamaPlan).get())
+    await assertFails(as(USERS.SINGLE.uid).doc(alfaPlan).get())
+    // Suspensão comercial: só o administrador com a permissão mantém a consulta.
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
+    })
+    await assertFails(delegate.doc(alfaPlan).get())
   })
 
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {

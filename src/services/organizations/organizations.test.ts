@@ -316,8 +316,8 @@ test('Adaptador real: somente leituras no servidor; nenhuma escrita em toda a ap
     assert.doesNotMatch(code, writes, relative(root, file))
     // Importações de valor (não `import type`) do SDK do Firestore.
     if (/import\s+\{[^}]*\}\s+from\s+'firebase\/firestore'/.test(code)) {
-      // DEV-02.1: o adaptador de LEITURA de parcerias é o único acréscimo autorizado.
-      assert.ok(/services\/(organizations\/sdk|partnerships\/sdk|firebase\/sdk)\.ts$/.test(file), `Firestore importado fora do adaptador: ${relative(root, file)}`)
+      // DEV-02.1 e DEV-02.2: adaptadores de LEITURA de parcerias e do Plano são os únicos acréscimos autorizados.
+      assert.ok(/services\/(organizations\/sdk|partnerships\/sdk|workPlans\/sdk|firebase\/sdk)\.ts$/.test(file), `Firestore importado fora do adaptador: ${relative(root, file)}`)
     }
   }
 })

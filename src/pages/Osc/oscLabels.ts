@@ -20,5 +20,6 @@ export const PAGE_META = {
   identificacao: { title: 'Identificação da OSC', description: 'Dados da organização selecionada.' },
   parcerias: { title: 'Parcerias', description: 'Localização, seleção e cadastro autorizado.' },
   parceria: { title: 'Identificação da Parceria', description: 'Consulta das informações de identificação, situação e vigência da parceria.' },
+  plano: { title: 'Plano de Trabalho', description: 'Consulta e cadastro estruturado do Plano de Trabalho aprovado.' },
   usuarios: { title: 'Usuários e Permissões', description: 'Administração de vínculos e permissões no nível da OSC' },
 } as const

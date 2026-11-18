@@ -40,7 +40,7 @@ Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines
 ```
 .
 ├── public/               # Arquivos estáticos servidos sem processamento (favicon)
-├── api/                  # Funções da Vercel: /api/osc-permissions (DEV-01.3), /api/osc-partnerships (DEV-02.1)
+├── api/                  # Funções da Vercel: /api/osc-permissions, /api/osc-partnerships, /api/osc-work-plans
 │   └── _lib/             # Lógica do servidor (não exposta como rota)
 ├── src/
 │   ├── assets/           # Imagens, ícones e fontes importados pelo código
@@ -431,7 +431,7 @@ IDs estáveis `modulo.capacidade`. Não existem IDs genéricos (`admin`, `all`, 
 | --- | --- | --- |
 | Gestão de usuários e permissões | — (gestão é competência do administrador/delegado) | `users.invite` |
 | Gestão de parcerias | `partnerships.view`, `partnerships.create`, `partnerships.edit` (DEC-PAR-001) | — |
-| Plano de Trabalho | `work-plan.view` | `work-plan.edit` |
+| Plano de Trabalho | `work-plan.view`, `work-plan.edit` (cadastro não finalizado), `work-plan.finalize` (DEV-02.2) | — |
 | Execução e Monitoramento | `execution.view` | `execution.edit` |
 | Gestão Financeira | `financial.view` | `financial.edit` |
 | Gestão Documental | `documents.view` | `documents.edit` |
@@ -787,7 +787,124 @@ Nada foi publicado. Para o Preview:
 - Fluxo de alteração de campos protegidos (datas, valor, instrumento) com registro formal.
 - Upload e conferência do Plano de Trabalho (Storage bloqueado).
 
-## 11. Publicação na Vercel
+## 11. Plano de Trabalho aprovado — estrutura, cadastro e consulta (DEV-02.2)
+
+**Situação:** implementado e habilitado pelo servidor; **validado em emuladores**; **não validado no
+Preview** (depende de 11.9). A DEV-02.2 **não** está homologada.
+
+### 11.1 Referências verificadas
+
+| Referência | Uso |
+| --- | --- |
+| HF-G05 / PAG-OSC05 (WF-OSC05-01; JOR-05) | Etapa 1 "identificação do Plano aprovado": **data da aprovação pelo órgão público** e **período de execução** (obrigatórios); seção "Objeto e Público"; textos "Plano de Trabalho aprovado ainda não registrado", "A finalização [...] não representa aprovação oficial"; permissões "Editar plano de trabalho" (registra) e "Consultar plano de trabalho"; arquivada → "disponível somente para consulta" |
+| AF-01 (PT-1 a PT-5) e PD-01-P01 | Versões preservadas e finalização (incremento futuro); prorrogação não cria versão; arquivada somente consulta |
+| DEC-006, 032, 033, 034, 035, 037, 038, 039 | **Somente os títulos** informados no pedido; o texto das decisões não foi localizado (repositório, canvas, Google Drive) |
+| RC-020 a RC-028, Inventário FUN | Não localizados; não substituem FUN |
+
+Etapas 2 e 3 do protótipo (metas, indicadores, fórmulas, planejamento financeiro) ficam **fora** deste
+incremento (DEC-035; módulos futuros). Nada foi inventado como obrigatório além do homologado.
+
+### 11.2 Matriz de campos
+
+Origem: **H** protótipo homologado; **D** título de decisão; **T** proposta técnica (opcional). Estados:
+informado / não informado / não aplicável (zero é informado). Todos os campos: editáveis enquanto
+"em cadastramento"; **preservados (somente leitura)** após a finalização.
+
+| Campo | ID técnico | Tipo | Grupo | Origem | Exigido para finalizar | Admite "não se aplica" | Validação |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Data da aprovação pelo órgão público | `approvalDate` | data | Identificação do Plano | H | **Sim** | Não | Real, não futura; posterior à formalização → aviso |
+| Identificação do ato ou documento de aprovação | `approvalReference` | texto ≤300 | Identificação do Plano | T (DEC-006) | Não | Não | Sem caracteres de controle |
+| Início do período de execução | `executionStart` | data | Execução | H | **Sim** | Não | Real |
+| Término do período de execução | `executionEnd` | data | Execução | H | **Sim** | Não | ≥ início; fora da vigência → aviso |
+| Forma de execução | `executionMethod` | texto ≤4000 | Execução | T (DEC-032) | Não | Não | — |
+| Público atendido | `targetAudience` | texto ≤2000 | Abrangência | H ("Objeto e Público") | Não | Sim | — |
+| Quantidade estimada de beneficiários | `estimatedBeneficiaries` | inteiro ≥0 | Abrangência | T (DEC-032) | Não | Sim | Inteiro 0–10⁹; zero é informado |
+| Abrangência territorial | `geographicScope` | texto ≤1000 | Abrangência | T (DEC-032) | Não | Sim | — |
+| Justificativa e contextualização | `justification` | texto ≤8000 | Complementares | T (DEC-032) | Não | Não | — |
+| Informações complementares | `complementaryNotes` | texto ≤8000 | Complementares | D (DEC-032) | Não | Não | — |
+
+**Não duplicados (fonte autoritativa = cadastro da parceria):** instrumento, número, órgão, objeto,
+formalização, vigência, situação administrativa e declaração de aprovação do Plano. A PAG-OSC05 os
+exibe a partir da parceria. Aplicabilidade por instrumento (DEC-037): planejamento financeiro
+**não se aplica** ao Acordo de Cooperação (exibido; nada é registrado).
+
+### 11.3 Modelo Firestore
+
+```
+oscs/{oscId}/partnerships/{partnershipId}/workPlans/original
+  schemaVersion 1, id 'original', oscId, partnershipId,
+  origin { kind 'approved-plan-registration', formalVersion false, sequence 1, sourceWorkPlanId null },
+  registrationStatus 'in-registration' | 'finalized'   ("não estruturado" = documento ausente),
+  values { <campo>: { state, value? } }, document { status 'not-stored', storagePath null },
+  revision, startRequestId, lastUpdateRequestId, finalizationRequestId,
+  createdAt/By, updatedAt/By, finalizedAt/By
+oscs/{oscId}/workPlanEvents/{id}   action start|update|finalize, partnershipId, workPlanId, actorUid,
+                                    actorAuthority, fields (update), revisões, at — sem conteúdo textual
+```
+
+Identificador fixo `original` sob a parceria: associação inequívoca, consulta por um único `get` e
+inícios simultâneos colidindo no mesmo documento (um só registro). Isolamento pelo caminho da OSC.
+
+### 11.4 Versionamento futuro (DEC-034/039) — preparado, não implementado
+
+- O registro atual é a **origem** da cadeia (`origin.sequence = 1`, `sourceWorkPlanId = null`,
+  `formalVersion = false`): **não** é apresentado como versão formal.
+- Uma nova versão integral será **outro documento** em `workPlans/` (ex.: `sequence = 2`,
+  `sourceWorkPlanId = 'original'`, ato formal e data), sem alterar o anterior: o histórico é a lista da
+  subcoleção; diferenças = comparação campo a campo de `values`.
+- Registros futuros (metas, execução, despesas) guardarão `workPlanId` de origem (DEC-039).
+- Neste incremento: nenhuma versão é criada; edição comum não gera versão; prorrogação não toca o Plano;
+  registro finalizado não é sobrescrito.
+
+### 11.5 Permissões (catálogo)
+
+| Operação | Permissão | Observação |
+| --- | --- | --- |
+| Consultar o Plano | `work-plan.view` | Navegar até ele exige também `partnerships.view` (seleção da parceria) |
+| Iniciar e alterar o cadastro **não finalizado** | `work-plan.edit` | Semântica homologada (HF-G05: "Editar plano de trabalho" → "Registrar Plano aprovado"), restrita ao cadastro em andamento; rótulo atualizado |
+| Finalizar internamente | `work-plan.finalize` (**nova**) | DEC-038; competência própria, não implícita em `edit` |
+
+Concedidas uma a uma pela matriz da UX-001. Nenhuma concessão automática; administrador sem permissões
+implícitas; DEC-PAR-002, proibição de autoconcessão e delegação sem subdelegação preservadas.
+**Decisão técnica a confirmar (não impeditiva):** separar finalização de edição (no protótipo, ambas
+estavam sob "Editar plano de trabalho"). Para unificar, basta conceder as duas.
+
+### 11.6 Servidor (`/api/osc-work-plans`) e regras
+
+Token → corpo estrito → transação (OSC, vínculo, parceria, Plano) → permissão **antes** de revelar a
+parceria → parceria da OSC → arquivada bloqueia → finalizado bloqueia (409) → revisão (409 `stale`) →
+validação → gravação + auditoria. Suspensão comercial bloqueia tudo; parceria suspensa ou encerrada não.
+Idempotência: início pelo ID fixo; alteração por `lastUpdateRequestId`; finalização por
+`finalizationRequestId`; a finalização exige `confirm: true`.
+Security Rules: `workPlans` com `get/list` somente por `canConsult(oscId, 'work-plan.view')`; nenhuma
+escrita pelo cliente; `workPlanEvents` ilegível.
+
+### 11.7 Documento aprovado
+
+Storage continua com negação integral (`storage.rules`). Nenhum upload simulado; o Plano mostra
+"Documento não armazenado no SIGOSC". `document.status = 'not-stored'` e `storagePath = null` preparam a
+vinculação futura, sem dependência de arquivo inexistente.
+
+### 11.8 Pendências
+
+- **Correção de erro material em registro finalizado:** bloqueada; requer decisão (fluxo de retificação ou
+  nova versão).
+- Texto integral das decisões DEC-006/032–039 e Inventário FUN: não localizados; campos **T** a confirmar.
+- Metas, indicadores, fórmulas, planejamento financeiro, versões e alterações formais: incrementos futuros.
+- Armazenamento documental (Storage) e permissões do administrador pela Administração da Plataforma.
+
+### 11.9 Validação no Preview (Firebase de testes)
+
+1. Publicar `firestore.rules` no `sigorsc-testes` (7.6). Efeito: leitura do Plano com `work-plan.view`;
+   nenhuma escrita pelo cliente; sem índices novos.
+2. A função `/api/osc-work-plans` usa as mesmas variáveis da 8.7; conferir 401 sem token.
+3. Pela matriz, conceder a um usuário operacional: "Consultar parcerias da OSC", "Consultar Planos de
+   Trabalho", "Registrar e alterar Plano de Trabalho não finalizado" e "Finalizar internamente…".
+4. Selecionar uma parceria → "Plano de Trabalho" → iniciar, preencher, salvar e finalizar; conferir
+   `workPlans/original` e `workPlanEvents`. Os dados são reais no ambiente de testes (use conteúdo
+   fictício); reversão: excluir o documento do Plano e os eventos.
+
+## 12. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
 2. A Vercel detecta o preset **Vite** automaticamente:
@@ -801,7 +918,7 @@ Nada foi publicado. Para o Preview:
 e o preset Vite da Vercel já define build e diretório de saída. Quando um roteador SPA for adotado,
 será necessário adicionar uma regra de *rewrite* para `index.html`.
 
-## 12. Estado atual
+## 13. Estado atual
 
 | Item | Situação |
 | --- | --- |
@@ -817,7 +934,8 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Regras Multi-Tenant de leitura | Implementadas e testadas em emulador; **publicação no Firebase de testes pendente** |
 | Permissões individuais, delegação, suspensão comercial (DEV-01.3) | Implementado e testado em emuladores; **operações de servidor não configuradas** no Preview |
 | Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
-| Plano de Trabalho, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
+| Plano de Trabalho: cadastro estruturado, consulta e finalização interna (DEV-02.2) | Implementado; validado em emuladores; **não validado no Preview** |
+| Versões do Plano, metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

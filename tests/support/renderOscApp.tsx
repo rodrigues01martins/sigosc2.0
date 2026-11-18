@@ -9,6 +9,7 @@ import { AuthProvider } from '../../src/components/AuthProvider.tsx'
 import { OrganizationProvider } from '../../src/components/OrganizationProvider.tsx'
 import { PartnershipsProvider } from '../../src/components/PartnershipsProvider.tsx'
 import { PermissionsApiProvider } from '../../src/components/PermissionsApiProvider.tsx'
+import { WorkPlansProvider } from '../../src/components/WorkPlansProvider.tsx'
 import { sanitizePermissions } from '../../src/domain/authorization.ts'
 import { createAuthService } from '../../src/services/auth/authService.ts'
 import { createAuthStore } from '../../src/services/auth/authStore.ts'
@@ -16,9 +17,11 @@ import { createOrganizationService } from '../../src/services/organizations/orga
 import { createOrganizationStore } from '../../src/services/organizations/organizationStore.ts'
 import { createMemorySelectionStorage } from '../../src/services/organizations/selectionStorage.ts'
 import { createPartnershipService } from '../../src/services/partnerships/partnershipService.ts'
+import { createWorkPlanService } from '../../src/services/workPlans/workPlanService.ts'
 import { createFakeAuthSdk } from './fakeAuthSdk.ts'
 import { createFakeOrganizationsSdk } from './fakeOrganizationsSdk.ts'
 import { createFakePartnerships } from './fakePartnerships.ts'
+import { createFakeWorkPlans } from './fakeWorkPlans.ts'
 import { createFakePermissionsServer, type FakeServerMember } from './fakePermissionsServer.ts'
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath } from './organizationFixtures.ts'
 import type { PartnershipFixture } from './partnershipFixtures.ts'
@@ -38,9 +41,11 @@ export interface RenderOptions {
   partnerships?: PartnershipFixture[]
   /** DEV-02.1: tamanho de página da consulta (padrão do serviço). */
   pageSize?: number
+  /** DEV-02.2: Planos estruturados simulados. */
+  workPlans?: Parameters<typeof createFakeWorkPlans>[0]
 }
 
-export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, storage = createMemorySelectionStorage(), prepare, partnerships, pageSize }: RenderOptions = {}) {
+export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, storage = createMemorySelectionStorage(), prepare, partnerships, pageSize, workPlans }: RenderOptions = {}) {
   const fakeAuth = createFakeAuthSdk({ accounts: Object.values(ALL_USERS).map((u) => ({ ...u })), persistedUser: { ...user } })
   const authService = createAuthService(fakeAuth.auth, fakeAuth.sdk)
   const authStore = createAuthStore(authService)
@@ -76,18 +81,22 @@ export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, stora
     service: createPartnershipService(fakePartnerships.db, fakePartnerships.sdk, pageSize),
     api: fakePartnerships.api,
   }
+  const fakeWorkPlans = createFakeWorkPlans(workPlans)
+  const workPlanDependencies = { service: createWorkPlanService(fakeWorkPlans.db, fakeWorkPlans.sdk), api: fakeWorkPlans.api }
   render(
     <StrictMode>
       <AuthProvider value={{ store: authStore, service: authService }}>
         <OrganizationProvider store={organizationStore}>
           <PermissionsApiProvider api={api}>
             <PartnershipsProvider value={partnershipDependencies}>
-              <AuthGate environment="test" />
+              <WorkPlansProvider value={workPlanDependencies}>
+                <AuthGate environment="test" />
+              </WorkPlansProvider>
             </PartnershipsProvider>
           </PermissionsApiProvider>
         </OrganizationProvider>
       </AuthProvider>
     </StrictMode>,
   )
-  return { server, fakeDb, storage, organizationStore, partnerships: fakePartnerships }
+  return { server, fakeDb, storage, organizationStore, partnerships: fakePartnerships, workPlans: fakeWorkPlans }
 }

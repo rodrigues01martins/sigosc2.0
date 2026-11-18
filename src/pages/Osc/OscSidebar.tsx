@@ -87,6 +87,7 @@ const LABEL: Record<OscRoute, string> = {
   identificacao: PAGE_META.identificacao.title,
   parcerias: PAGE_META.parcerias.title,
   parceria: 'Identificação da parceria',
+  plano: 'Plano de Trabalho',
   usuarios: 'Usuários e permissões',
 }
 
@@ -98,7 +99,7 @@ export function OscNavigation({ route, canManagePermissions, selectedPartnership
   const items: { route: OscRoute; icon: ReactNode }[] = [
     { route: 'identificacao', icon: <RecordIcon /> },
     { route: 'parcerias', icon: <LayersIcon /> },
-    ...(selectedPartnershipId ? [{ route: 'parceria' as const, icon: <RecordIcon /> }] : []),
+    ...(selectedPartnershipId ? [{ route: 'parceria' as const, icon: <RecordIcon /> }, { route: 'plano' as const, icon: <LayersIcon /> }] : []),
     ...(canManagePermissions ? [{ route: 'usuarios' as const, icon: <UsersIcon /> }] : []),
   ]
   return (
@@ -109,7 +110,7 @@ export function OscNavigation({ route, canManagePermissions, selectedPartnership
             type="button"
             className={styles.navItem}
             aria-current={route === item.route ? 'page' : undefined}
-            onClick={() => onNavigate(item.route, item.route === 'parceria' ? (selectedPartnershipId ?? undefined) : undefined)}
+            onClick={() => onNavigate(item.route, item.route === 'parceria' || item.route === 'plano' ? (selectedPartnershipId ?? undefined) : undefined)}
           >
             {item.icon}
             <span>{LABEL[item.route]}</span>

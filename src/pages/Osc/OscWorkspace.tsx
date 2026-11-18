@@ -17,6 +17,7 @@ import { OscNavigation, OscSelector } from './OscSidebar.tsx'
 import { NoMembershipState, NoSelectableState, SelectOscPrompt, SuspensionBlocked, SuspensionReadOnly } from './OscStates.tsx'
 import { PartnershipIdentificationPage } from './partnerships/PartnershipIdentificationPage.tsx'
 import { PartnershipsPage } from './partnerships/PartnershipsPage.tsx'
+import { WorkPlanPage } from './workPlans/WorkPlanPage.tsx'
 import { UsersPermissionsPage } from './UsersPermissionsPage.tsx'
 
 /**
@@ -104,7 +105,7 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
           onSelect={(oscId) => {
             // Troca de OSC: a parceria anterior é descartada e a navegação volta à lista (MT-3).
             setSelection(null)
-            if (route === 'parceria') navigate('parcerias')
+            if (route === 'parceria' || route === 'plano') navigate('parcerias')
             void select(oscId)
           }}
         />
@@ -147,6 +148,22 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
               />
             ) : route === 'parceria' ? (
               <PartnershipIdentificationPage
+                key={location.partnershipId ?? ''}
+                context={context}
+                oscName={active.organization.name}
+                partnershipId={location.partnershipId ?? ''}
+                partnershipLabel={partnershipLabel}
+                onResolved={(p) => {
+                  if (selected?.id !== p.id || selected.status !== administrativeStatusLabel(p.administrativeStatus)) {
+                    setSelection({ oscId: active.oscId, id: p.id, title: partnershipTitle(p), status: administrativeStatusLabel(p.administrativeStatus) })
+                  }
+                }}
+                onNotFound={() => setSelection((current) => (current?.id === location.partnershipId ? null : current))}
+                onBack={() => navigate('parcerias')}
+                onOpenWorkPlan={() => navigate('plano', location.partnershipId ?? '')}
+              />
+            ) : route === 'plano' ? (
+              <WorkPlanPage
                 key={location.partnershipId ?? ''}
                 context={context}
                 oscName={active.organization.name}

@@ -433,3 +433,15 @@
     min-height: 44px;
   }
 }
+
+/* DEV-02.2: selo de situação do cadastro que quebra linha em telas estreitas; ícones de nota sem encolher. */
+.situation {
+  white-space: normal;
+  border: 1px solid currentColor;
+  max-width: 100%;
+}
+
+.iconNote svg {
+  flex: 0 0 18px;
+  margin-top: 2px;
+}

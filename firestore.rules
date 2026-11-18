@@ -16,6 +16,9 @@ rules_version = '2';
 //   ('partnerships.edit') ocorrem SOMENTE pelo servidor (/api/osc-partnerships, Admin SDK) —
 //   DEV-02.1-C01. Eventos de auditoria (partnershipEvents) e marcadores de idempotência
 //   (partnershipRequests) permanecem ilegíveis e não graváveis pelo cliente (negação por padrão).
+// DEV-02.2: exceção MÍNIMA de LEITURA para o Plano de Trabalho estruturado:
+//   oscs/{oscId}/partnerships/{id}/workPlans/{workPlanId} → get/list com canConsult(oscId, 'work-plan.view').
+//   Auditoria (workPlanEvents) ilegível; nenhuma escrita pelo cliente.
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo
@@ -93,6 +96,12 @@ service cloud.firestore {
       // Escrita negada a todos os clientes (inclusive com permissão concedida).
       match /partnerships/{partnershipId} {
         allow get, list: if canConsult(oscId, 'partnerships.view');
+
+        // DEV-02.2 — Plano de Trabalho estruturado: somente LEITURA com 'work-plan.view'
+        // (competência própria). Gravações exclusivamente pelo servidor (/api/osc-work-plans).
+        match /workPlans/{workPlanId} {
+          allow get, list: if canConsult(oscId, 'work-plan.view');
+        }
       }
     }
 
