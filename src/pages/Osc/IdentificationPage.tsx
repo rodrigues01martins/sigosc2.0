@@ -13,6 +13,8 @@ interface Props {
   canManagePermissions: boolean
   onConsultPartnerships(): void
   onUsersAndPermissions(): void
+  /** DEV-02.1: texto da parceria selecionada na faixa de contexto. */
+  partnershipLabel?: string
 }
 
 const COMMERCIAL_CLASS = { active: ds.commercialRegular, suspended: ds.commercialSuspended, pending: ds.commercialOther, cancelled: ds.commercialOther }
@@ -32,7 +34,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
  * autoritativa), competência e permissões do usuário. CNPJ e quantidade de
  * parcerias ainda não existem no modelo de dados e por isso não são exibidos.
  */
-export function IdentificationPage({ membership, authority, canManagePermissions, onConsultPartnerships, onUsersAndPermissions }: Props) {
+export function IdentificationPage({ membership, authority, canManagePermissions, onConsultPartnerships, onUsersAndPermissions, partnershipLabel }: Props) {
   const organization = membership.organization
   if (!organization) return null
   const administrator =
@@ -40,7 +42,7 @@ export function IdentificationPage({ membership, authority, canManagePermissions
 
   return (
     <>
-      <ContextBar oscName={organization.name} />
+      <ContextBar oscName={organization.name} partnership={partnershipLabel} />
 
       <section className={ds.card} aria-labelledby="osc01-dados">
         <h2 id="osc01-dados" className={ds.sectionTitle}>

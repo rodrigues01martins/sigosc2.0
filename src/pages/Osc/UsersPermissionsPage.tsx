@@ -20,6 +20,8 @@ const COMPACT_QUERY = '(max-width: 719px)'
 interface Props {
   context: AuthorizationContext
   oscName: string
+  /** DEV-02.1: parceria selecionada (HF-G05: "Parceria: …" ou "Sem parceria selecionada"). */
+  partnershipName?: string | null
 }
 
 interface DelegationRequest {
@@ -44,7 +46,7 @@ function exportCsv(directory: MemberDirectory) {
  * delegação: confirmação explícita. Toda operação é decidida pelo servidor
  * (/api/osc-permissions), que registra autoria e auditoria.
  */
-export function UsersPermissionsPage({ context, oscName }: Props) {
+export function UsersPermissionsPage({ context, oscName, partnershipName = null }: Props) {
   const api = usePermissionsApi()
   const { load, pending, failed, feedback, mutate, retryLoad } = usePermissionDirectory(api, context.oscId)
   const compact = useMediaQuery(COMPACT_QUERY)
@@ -55,7 +57,7 @@ export function UsersPermissionsPage({ context, oscName }: Props) {
   const contextBar = (
     <ContextBar
       oscName={oscName}
-      partnership="Sem parceria selecionada"
+      partnership={partnershipName ? `Parceria: ${partnershipName}` : 'Sem parceria selecionada'}
       extra={
         <>
           {'  •  '}Usuário atual: <strong>{viewerAuthority.allowed ? AUTHORITY_LABEL[viewerAuthority.authority] : ''}</strong>

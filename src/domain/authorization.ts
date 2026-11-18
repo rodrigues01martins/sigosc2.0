@@ -140,6 +140,12 @@ export type Operation =
   | { readonly kind: 'grant-delegation' | 'revoke-delegation'; readonly target: MembershipFacts | null }
   /** Operação futura de módulo (ex.: consultar parcerias), exige a permissão correspondente. */
   | { readonly kind: 'operate'; readonly permission: unknown }
+  /**
+   * DEV-02.1 — CONSULTA de módulo: exige a permissão individual (sem permissões implícitas).
+   * Na suspensão comercial, somente o administrador único mantém a consulta (regra homologada
+   * "AO: consultar/exportar"); para os demais, a suspensão bloqueia como em `operate`.
+   */
+  | { readonly kind: 'consult'; readonly permission: unknown }
 
 export type Authority = 'administrator' | 'delegate' | 'member'
 
@@ -205,6 +211,12 @@ export function evaluate(context: AuthorizationContext, operation: Operation): D
       if (suspended) return deny('commercial-suspension')
       if (!isGrantablePermission(operation.permission)) return deny('invalid-permission')
       // O administrador NÃO possui permissões operacionais implícitas.
+      if (!membership.permissions.includes(operation.permission)) return deny('permission-not-granted')
+      return { allowed: true, authority }
+
+    case 'consult':
+      if (suspended && authority !== 'administrator') return deny('commercial-suspension')
+      if (!isGrantablePermission(operation.permission)) return deny('invalid-permission')
       if (!membership.permissions.includes(operation.permission)) return deny('permission-not-granted')
       return { allowed: true, authority }
 

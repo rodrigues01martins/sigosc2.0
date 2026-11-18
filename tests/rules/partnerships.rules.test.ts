@@ -1,0 +1,95 @@
+/**
+ * DEV-02.1 — Security Rules das parcerias (`npm run test:rules`, emulador, projeto fictício).
+ * Consulta isolada por OSC e permissão; nenhuma escrita pelo cliente.
+ * Controles positivos: os documentos existem e quem tem a permissão consegue lê-los.
+ */
+import { after, before, beforeEach, describe, test } from 'node:test'
+import assert from 'node:assert/strict'
+import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
+import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath } from '../support/organizationFixtures.ts'
+import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
+import { partnershipDocument } from '../support/partnershipFixtures.ts'
+import { createTestEnvironment } from './setup.ts'
+
+const ALFA = OSCS.ALFA.id
+const GAMA = OSCS.GAMA.id
+const alfaPath = `oscs/${ALFA}/partnerships/parceria-alfa-1`
+const gamaPath = `oscs/${GAMA}/partnerships/parceria-gama-1`
+
+async function seed(env: RulesTestEnvironment) {
+  await env.clearFirestore()
+  await env.withSecurityRulesDisabled(async (admin) => {
+    const db = admin.firestore()
+    for (const osc of Object.values(OSCS)) await db.doc(oscPath(osc)).set(oscDocument(osc))
+    for (const member of [...MEMBERS, ...PERMISSION_MEMBERS]) await db.doc(memberPath(member)).set(memberDocument(member))
+    // SINGLE (administrador de GAMA) recebe a permissão de consulta em GAMA.
+    await db.doc(memberPath({ oscId: GAMA, uid: USERS.SINGLE.uid })).update({ permissions: ['partnerships.view'] })
+    await db.doc(alfaPath).set(partnershipDocument({ id: 'parceria-alfa-1', oscId: ALFA }))
+    await db.doc(gamaPath).set(partnershipDocument({ id: 'parceria-gama-1', oscId: GAMA }))
+    await db.doc(`oscs/${ALFA}/partnershipEvents/evento-1`).set({ action: 'create', actorUid: 'x' })
+    assert.equal((await db.doc(alfaPath).get()).exists, true)
+    assert.equal((await db.doc(gamaPath).get()).exists, true)
+  })
+}
+
+describe('Firestore — parcerias (DEV-02.1)', () => {
+  let env: RulesTestEnvironment
+  before(async () => { env = await createTestEnvironment() })
+  after(async () => { await env.cleanup() })
+  beforeEach(() => seed(env))
+  const as = (uid: string) => env.authenticatedContext(uid).firestore()
+  const operator = PERMISSION_USERS.OPERATOR.uid
+
+  test('T01 (regra) — membro ativo com partnerships.view consulta as parcerias da própria OSC', async () => {
+    const doc = await assertSucceeds(as(operator).doc(alfaPath).get())
+    assert.equal(doc.data()?.oscId, ALFA)
+    const list = await assertSucceeds(as(operator).collection(`oscs/${ALFA}/partnerships`).orderBy('createdAt', 'desc').limit(51).get())
+    assert.equal(list.size, 1)
+  })
+
+  test('T02/T08 (regra) — sem acesso às parcerias de outra OSC, por documento, lista ou grupo de coleções', async () => {
+    await assertFails(as(operator).doc(gamaPath).get())
+    await assertFails(as(operator).collection(`oscs/${GAMA}/partnerships`).get())
+    await assertFails(as(operator).collectionGroup('partnerships').get())
+    // O administrador de GAMA (com permissão) não lê ALFA.
+    await assertSucceeds(as(USERS.SINGLE.uid).doc(gamaPath).get())
+    await assertFails(as(USERS.SINGLE.uid).doc(alfaPath).get())
+  })
+
+  test('Sem permissão individual não há consulta (administrador sem permissões implícitas; delegado; ex-membro)', async () => {
+    await assertFails(as(USERS.MULTI.uid).doc(alfaPath).get())
+    await assertFails(as(PERMISSION_USERS.DELEGATE.uid).collection(`oscs/${ALFA}/partnerships`).get())
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.FORMER.uid })).update({ permissions: ['partnerships.view'] })
+    })
+    await assertFails(as(PERMISSION_USERS.FORMER.uid).doc(alfaPath).get())
+    await assertFails(env.unauthenticatedContext().firestore().doc(alfaPath).get())
+  })
+
+  test('T14 (regra) — suspensão comercial: somente o administrador com a permissão mantém a consulta', async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const db = admin.firestore()
+      await db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
+      await db.doc(memberPath({ oscId: ALFA, uid: USERS.MULTI.uid })).update({ permissions: ['partnerships.view'] })
+    })
+    await assertFails(as(operator).doc(alfaPath).get())
+    await assertSucceeds(as(USERS.MULTI.uid).doc(alfaPath).get())
+    await assertSucceeds(as(USERS.MULTI.uid).collection(`oscs/${ALFA}/partnerships`).get())
+  })
+
+  test('T13 (regra) — nenhuma escrita pelo cliente, mesmo com permissão e com campos forjados', async () => {
+    const forged = partnershipDocument({ id: 'nova', oscId: ALFA })
+    for (const uid of [operator, USERS.MULTI.uid, PERMISSION_USERS.DELEGATE.uid]) {
+      await assertFails(as(uid).doc(`oscs/${ALFA}/partnerships/nova`).set(forged))
+      await assertFails(as(uid).collection(`oscs/${ALFA}/partnerships`).add(forged))
+      await assertFails(as(uid).doc(alfaPath).update({ administrativeStatus: 'arquivada' }))
+      await assertFails(as(uid).doc(alfaPath).delete())
+    }
+  })
+
+  test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
+    await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
+    await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())
+    await assertFails(as(USERS.MULTI.uid).collection(`oscs/${ALFA}/partnershipEvents`).add({ action: 'create' }))
+  })
+})

@@ -1,0 +1,394 @@
+/* Gestão de Parcerias (DEV-02.1) — tokens do DS-05; layout do HF-G05 (PAG-OSC02). */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ds-space-4);
+  padding: 20px 24px;
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  flex: 1 1 280px;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.searchBox {
+  position: relative;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  color: var(--ds-neutral-600);
+  pointer-events: none;
+}
+
+.input,
+.searchInput,
+.textarea,
+.select {
+  width: 100%;
+  min-height: var(--ds-size-control);
+  padding: 0 12px;
+  border: 1px solid var(--ds-border-control);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-bg-surface);
+  color: var(--ds-fg-default);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.searchInput {
+  padding-left: 38px;
+}
+
+.textarea {
+  min-height: 96px;
+  padding: 9px 12px;
+  resize: vertical;
+}
+
+.input:focus-visible,
+.searchInput:focus-visible,
+.textarea:focus-visible,
+.select:focus-visible,
+.choice input:focus-visible,
+.check input:focus-visible,
+.selectButton:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.input[aria-invalid='true'],
+.textarea[aria-invalid='true'] {
+  border-color: var(--ds-feedback-error-fg);
+}
+
+.registration {
+  flex: 0 1 420px;
+  min-width: 0;
+}
+
+/* Ícones dos avisos não encolhem em textos longos. */
+.registration svg {
+  flex: 0 0 18px;
+  margin-top: 2px;
+}
+
+.listHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  padding: 16px 20px;
+}
+
+.count {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ds-fg-muted);
+}
+
+.tableScroll {
+  position: relative;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.table th {
+  padding: 8px 20px;
+  background: var(--ds-neutral-50);
+  color: var(--ds-fg-muted);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.table td,
+.table tbody th {
+  padding: 12px 20px;
+  border-top: 1px solid var(--ds-border-subtle);
+  vertical-align: middle;
+  text-align: left;
+}
+
+.table tbody th {
+  font-weight: 400;
+  background: transparent;
+  letter-spacing: normal;
+  color: inherit;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.table .selected td,
+.table .selected th {
+  background: var(--ds-blue-200);
+}
+
+.name {
+  display: block;
+  font-weight: 700;
+  color: var(--ds-fg-default);
+}
+
+.detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ds-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.term {
+  white-space: nowrap;
+}
+
+.access {
+  width: 180px;
+}
+
+.selectButton {
+  composes: button from '../../../components/ds/ds.module.css';
+  width: 100%;
+  min-width: 140px;
+  background: var(--ds-neutral-0);
+  border-color: var(--ds-primary-700);
+  color: var(--ds-primary-700);
+}
+
+.selectButton:hover {
+  background: var(--ds-blue-200);
+}
+
+.selectButton[aria-current='true'] {
+  background: var(--ds-primary-700);
+  color: var(--ds-neutral-0);
+}
+
+/* status.partnership.* — pílula com ícone (DS-05 Parte 2) */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: var(--ds-radius-pill);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status_em-execucao {
+  composes: status;
+  background: var(--ds-green-100);
+  color: var(--ds-green-700);
+}
+
+.status_suspensa {
+  composes: status;
+  background: var(--ds-accent-100);
+  color: var(--ds-accent-800);
+}
+
+.status_arquivada,
+.status_encerrada {
+  composes: status;
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-600);
+}
+
+.cards {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: 16px 20px;
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.card.selected {
+  background: var(--ds-blue-200);
+}
+
+.cardRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2) var(--ds-space-4);
+}
+
+.card .selectButton {
+  min-height: 44px;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+  padding: 16px 20px;
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.inner {
+  padding: 0 20px 20px;
+}
+
+/* Identificação da parceria (PAG-OSC04, consulta) */
+.dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--ds-space-4) var(--ds-space-5);
+  margin: 0;
+}
+
+.dl div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  min-width: 0;
+}
+
+.dl dt {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--ds-fg-muted);
+}
+
+.dl dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+/* Formulário (preparado) */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-5);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--ds-space-4) var(--ds-space-5);
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  min-width: 0;
+}
+
+.label {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.required {
+  color: var(--ds-feedback-error-fg);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ds-fg-muted);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--ds-feedback-error-fg);
+}
+
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-1);
+}
+
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ds-border-control);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-bg-surface);
+  cursor: pointer;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--ds-primary-700);
+  background: var(--ds-blue-200);
+  font-weight: 600;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+  min-height: 44px;
+}
+
+.check input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-3);
+}

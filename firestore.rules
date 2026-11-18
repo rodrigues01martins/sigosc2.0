@@ -10,6 +10,10 @@ rules_version = '2';
 // DEV-01.2: exceções MÍNIMAS de LEITURA para a estrutura Multi-Tenant:
 //   oscs/{oscId}                → lida somente por membro com vínculo ATIVO.
 //   oscs/{oscId}/members/{uid}  → cada usuário lê apenas o PRÓPRIO vínculo (ativo ou inativo).
+// DEV-02.1: exceção MÍNIMA de LEITURA para parcerias:
+//   oscs/{oscId}/partnerships/{id} → get/list somente com canConsult(oscId, 'partnerships.view').
+//   Nenhuma escrita pelo cliente (cadastro preparado no servidor e BLOQUEADO: permissão
+//   'partnerships.edit' pendente de especificação). Eventos de auditoria permanecem ilegíveis.
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo
@@ -58,6 +62,17 @@ service cloud.firestore {
         && get(ownMemberPath(oscId)).data.get('permissions', []).hasAny([permission]);
     }
 
+    // DEV-02.1 — Consulta de módulo. Exige vínculo ativo, OSC ativa e a permissão individual.
+    // Na suspensão comercial, somente o administrador único (oscs/{oscId}.administratorUid)
+    // mantém a consulta — e ainda assim apenas se possuir a permissão (sem permissões implícitas).
+    function canConsult(oscId, permission) {
+      return isActiveMember(oscId)
+        && oscData(oscId).registrationStatus == 'active'
+        && get(ownMemberPath(oscId)).data.get('permissions', []).hasAny([permission])
+        && (oscData(oscId).commercialStatus != 'suspended'
+            || oscData(oscId).get('administratorUid', null) == request.auth.uid);
+    }
+
     // Negação por padrão (DEV-00.8).
     match /{document=**} {
       allow read, write: if false;
@@ -70,6 +85,12 @@ service cloud.firestore {
       match /members/{memberUid} {
         // O próprio vínculo, ativo ou inativo (necessário para exibir a situação).
         allow get: if signedIn() && memberUid == request.auth.uid;
+      }
+
+      // DEV-02.1 — Parcerias da OSC: somente LEITURA, isolada pelo caminho da OSC.
+      // Escrita negada a todos os clientes (inclusive com permissão concedida).
+      match /partnerships/{partnershipId} {
+        allow get, list: if canConsult(oscId, 'partnerships.view');
       }
     }
 

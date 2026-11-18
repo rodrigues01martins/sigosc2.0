@@ -7,6 +7,7 @@ import { render } from '@testing-library/react'
 import { AuthGate } from '../../src/components/AuthGate.tsx'
 import { AuthProvider } from '../../src/components/AuthProvider.tsx'
 import { OrganizationProvider } from '../../src/components/OrganizationProvider.tsx'
+import { PartnershipsProvider } from '../../src/components/PartnershipsProvider.tsx'
 import { PermissionsApiProvider } from '../../src/components/PermissionsApiProvider.tsx'
 import { sanitizePermissions } from '../../src/domain/authorization.ts'
 import { createAuthService } from '../../src/services/auth/authService.ts'
@@ -14,10 +15,13 @@ import { createAuthStore } from '../../src/services/auth/authStore.ts'
 import { createOrganizationService } from '../../src/services/organizations/organizationService.ts'
 import { createOrganizationStore } from '../../src/services/organizations/organizationStore.ts'
 import { createMemorySelectionStorage } from '../../src/services/organizations/selectionStorage.ts'
+import { createPartnershipService } from '../../src/services/partnerships/partnershipService.ts'
 import { createFakeAuthSdk } from './fakeAuthSdk.ts'
 import { createFakeOrganizationsSdk } from './fakeOrganizationsSdk.ts'
+import { createFakePartnerships } from './fakePartnerships.ts'
 import { createFakePermissionsServer, type FakeServerMember } from './fakePermissionsServer.ts'
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath } from './organizationFixtures.ts'
+import type { PartnershipFixture } from './partnershipFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from './permissionFixtures.ts'
 
 export const ALL_USERS = { ...USERS, ...PERMISSION_USERS }
@@ -30,9 +34,13 @@ export interface RenderOptions {
   forge?: Record<string, unknown>
   storage?: ReturnType<typeof createMemorySelectionStorage>
   prepare?: (db: ReturnType<typeof createFakeOrganizationsSdk>) => void
+  /** DEV-02.1: parcerias simuladas (padrão: fixtures de ALFA e GAMA). */
+  partnerships?: PartnershipFixture[]
+  /** DEV-02.1: tamanho de página da consulta (padrão do serviço). */
+  pageSize?: number
 }
 
-export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, storage = createMemorySelectionStorage(), prepare }: RenderOptions = {}) {
+export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, storage = createMemorySelectionStorage(), prepare, partnerships, pageSize }: RenderOptions = {}) {
   const fakeAuth = createFakeAuthSdk({ accounts: Object.values(ALL_USERS).map((u) => ({ ...u })), persistedUser: { ...user } })
   const authService = createAuthService(fakeAuth.auth, fakeAuth.sdk)
   const authStore = createAuthStore(authService)
@@ -63,16 +71,23 @@ export function renderOscApp(user: TestUser, { suspendAlfa = false, forge, stora
     const state = authStore.getSnapshot()
     return state.status === 'authenticated' ? state.user.uid : null
   })
+  const fakePartnerships = createFakePartnerships(partnerships)
+  const partnershipDependencies = {
+    service: createPartnershipService(fakePartnerships.db, fakePartnerships.sdk, pageSize),
+    api: fakePartnerships.api,
+  }
   render(
     <StrictMode>
       <AuthProvider value={{ store: authStore, service: authService }}>
         <OrganizationProvider store={organizationStore}>
           <PermissionsApiProvider api={api}>
-            <AuthGate environment="test" />
+            <PartnershipsProvider value={partnershipDependencies}>
+              <AuthGate environment="test" />
+            </PartnershipsProvider>
           </PermissionsApiProvider>
         </OrganizationProvider>
       </AuthProvider>
     </StrictMode>,
   )
-  return { server, fakeDb, storage, organizationStore }
+  return { server, fakeDb, storage, organizationStore, partnerships: fakePartnerships }
 }

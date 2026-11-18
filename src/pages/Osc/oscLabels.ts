@@ -19,5 +19,6 @@ export const COMMERCIAL_BADGE_LABEL: Record<CommercialStatus, string> = {
 export const PAGE_META = {
   identificacao: { title: 'Identificação da OSC', description: 'Dados da organização selecionada.' },
   parcerias: { title: 'Parcerias', description: 'Localização, seleção e cadastro autorizado.' },
+  parceria: { title: 'Identificação da Parceria', description: 'Consulta das informações de identificação, situação e vigência da parceria.' },
   usuarios: { title: 'Usuários e Permissões', description: 'Administração de vínculos e permissões no nível da OSC' },
 } as const

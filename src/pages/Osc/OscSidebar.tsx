@@ -78,14 +78,27 @@ export function OscSelector({ memberships, activeOscId, pendingOscId, onSelect }
 interface NavigationProps {
   route: OscRoute
   canManagePermissions: boolean
-  onNavigate(route: OscRoute): void
+  /** DEV-02.1: parceria selecionada (contexto de trabalho), se houver. */
+  selectedPartnershipId?: string | null
+  onNavigate(route: OscRoute, partnershipId?: string): void
 }
 
-/** Itens da Gestão da OSC; "Usuários e permissões" só para quem tem a competência. */
-export function OscNavigation({ route, canManagePermissions, onNavigate }: NavigationProps) {
+const LABEL: Record<OscRoute, string> = {
+  identificacao: PAGE_META.identificacao.title,
+  parcerias: PAGE_META.parcerias.title,
+  parceria: 'Identificação da parceria',
+  usuarios: 'Usuários e permissões',
+}
+
+/**
+ * Itens da Gestão da OSC; "Usuários e permissões" só para quem tem a competência.
+ * Com uma parceria selecionada, "Identificação da parceria" leva a ela (contexto mantido).
+ */
+export function OscNavigation({ route, canManagePermissions, selectedPartnershipId = null, onNavigate }: NavigationProps) {
   const items: { route: OscRoute; icon: ReactNode }[] = [
     { route: 'identificacao', icon: <RecordIcon /> },
     { route: 'parcerias', icon: <LayersIcon /> },
+    ...(selectedPartnershipId ? [{ route: 'parceria' as const, icon: <RecordIcon /> }] : []),
     ...(canManagePermissions ? [{ route: 'usuarios' as const, icon: <UsersIcon /> }] : []),
   ]
   return (
@@ -96,10 +109,10 @@ export function OscNavigation({ route, canManagePermissions, onNavigate }: Navig
             type="button"
             className={styles.navItem}
             aria-current={route === item.route ? 'page' : undefined}
-            onClick={() => onNavigate(item.route)}
+            onClick={() => onNavigate(item.route, item.route === 'parceria' ? (selectedPartnershipId ?? undefined) : undefined)}
           >
             {item.icon}
-            <span>{item.route === 'usuarios' ? 'Usuários e permissões' : PAGE_META[item.route].title}</span>
+            <span>{LABEL[item.route]}</span>
           </button>
         </li>
       ))}

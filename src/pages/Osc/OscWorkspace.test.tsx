@@ -144,14 +144,17 @@ describe('Estrutura e navegação (layout HF-G05)', () => {
   })
 })
 
-describe('PAG-OSC02 — Parcerias (estrutura, sem funcionalidade)', () => {
-  it('apresenta estado indisponível, controles desabilitados e nenhuma parceria inventada', async () => {
+// DEV-02.1: o teste "PAG-OSC02 — estrutura, sem funcionalidade" (estado indisponível e
+// controles desabilitados) foi substituído, pois o módulo passou a funcionar. A intenção
+// (nenhuma parceria inventada; nenhum botão inoperante) é verificada abaixo e em
+// src/pages/Osc/partnerships/Partnerships.test.tsx.
+describe('PAG-OSC02 — Parcerias (sem dados inventados)', () => {
+  it('sem a permissão de consulta não há lista nem botão de cadastro; nenhuma parceria inventada', async () => {
     renderAs(USERS.SINGLE)
     await screen.findByText('OSC · Regular')
     await goTo('Parcerias')
-    expect(screen.getByRole('heading', { name: 'Gestão de Parcerias ainda não disponível' })).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Cadastrar parceria' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByLabelText('Localizar parcerias') as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getByRole('heading', { name: 'Consulta de parcerias não autorizada' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Cadastrar parceria' })).toBeNull()
     expect(document.body.textContent).not.toMatch(/Termo de (Colaboração|Fomento)|Acordo de Cooperação|Em execução|Selecionar/)
     expect(contextText()).toContain('Parceria: não selecionada')
   })

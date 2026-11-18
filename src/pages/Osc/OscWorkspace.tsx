@@ -8,12 +8,15 @@ import { useOscRoute } from '../../hooks/useOscRoute.ts'
 import { useActiveMembership, useOrganizationActions, useOrganizationState } from '../../hooks/useOrganization.ts'
 import shellStyles from '../../layouts/OscShell.module.css'
 import { OscShell } from '../../layouts/OscShell.tsx'
+import { administrativeStatusLabel, partnershipTitle } from '../../domain/partnerships.ts'
+import type { Partnership } from '../../services/partnerships/types.ts'
 import { LOAD_ERROR_MESSAGE, SELECTION_ERROR_MESSAGE } from '../Organizations/labels.ts'
 import { IdentificationPage } from './IdentificationPage.tsx'
 import { PAGE_META } from './oscLabels.ts'
 import { OscNavigation, OscSelector } from './OscSidebar.tsx'
 import { NoMembershipState, NoSelectableState, SelectOscPrompt, SuspensionBlocked, SuspensionReadOnly } from './OscStates.tsx'
-import { PartnershipsPage } from './PartnershipsPage.tsx'
+import { PartnershipIdentificationPage } from './partnerships/PartnershipIdentificationPage.tsx'
+import { PartnershipsPage } from './partnerships/PartnershipsPage.tsx'
 import { UsersPermissionsPage } from './UsersPermissionsPage.tsx'
 
 /**
@@ -28,7 +31,10 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
   const organizations = useOrganizationState()
   const { select, reload } = useOrganizationActions()
   const active = useActiveMembership()
-  const [route, navigate] = useOscRoute()
+  const [location, navigate] = useOscRoute()
+  const { route } = location
+  // DEV-02.1 — parceria selecionada (contexto de trabalho), SEMPRE vinculada à OSC em que foi escolhida.
+  const [selection, setSelection] = useState<{ oscId: string; id: string; title: string; status: string } | null>(null)
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState(false)
 
@@ -95,7 +101,12 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
           memberships={organizations.memberships}
           activeOscId={organizations.activeOscId}
           pendingOscId={organizations.pendingOscId}
-          onSelect={(oscId) => void select(oscId)}
+          onSelect={(oscId) => {
+            // Troca de OSC: a parceria anterior é descartada e a navegação volta à lista (MT-3).
+            setSelection(null)
+            if (route === 'parceria') navigate('parcerias')
+            void select(oscId)
+          }}
         />
       )
       const selectable = organizations.memberships.filter((m) => m.selectable)
@@ -112,15 +123,46 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
           content = <SuspensionBlocked key={active.oscId} oscName={active.organization.name} />
         } else {
           const canManage = decide(context, { kind: 'list-members' }).allowed
-          navigation = <OscNavigation route={route} canManagePermissions={canManage} onNavigate={navigate} />
+          // Seleção de outra OSC nunca é exibida nem reutilizada (isolamento Multi-Tenant).
+          const selected = selection?.oscId === active.oscId ? selection : null
+          const partnershipLabel = selected ? `Parceria: ${selected.title} · ${selected.status}` : 'Parceria: não selecionada'
+          const choose = (p: Partnership) => {
+            setSelection({ oscId: p.oscId, id: p.id, title: partnershipTitle(p), status: administrativeStatusLabel(p.administrativeStatus) })
+            navigate('parceria', p.id)
+          }
+          navigation = (
+            <OscNavigation route={route} canManagePermissions={canManage} selectedPartnershipId={selected?.id ?? null} onNavigate={navigate} />
+          )
           title = PAGE_META[route].title
           description = PAGE_META[route].description
           const page =
             route === 'parcerias' ? (
-              <PartnershipsPage oscName={active.organization.name} />
+              <PartnershipsPage
+                context={context}
+                oscName={active.organization.name}
+                partnershipLabel={partnershipLabel}
+                selectedId={selected?.id ?? null}
+                onSelect={choose}
+                onCreated={(id) => navigate('parceria', id)}
+              />
+            ) : route === 'parceria' ? (
+              <PartnershipIdentificationPage
+                key={location.partnershipId ?? ''}
+                context={context}
+                oscName={active.organization.name}
+                partnershipId={location.partnershipId ?? ''}
+                partnershipLabel={partnershipLabel}
+                onResolved={(p) => {
+                  if (selected?.id !== p.id || selected.status !== administrativeStatusLabel(p.administrativeStatus)) {
+                    setSelection({ oscId: active.oscId, id: p.id, title: partnershipTitle(p), status: administrativeStatusLabel(p.administrativeStatus) })
+                  }
+                }}
+                onNotFound={() => setSelection((current) => (current?.id === location.partnershipId ? null : current))}
+                onBack={() => navigate('parcerias')}
+              />
             ) : route === 'usuarios' ? (
               canManage ? (
-                <UsersPermissionsPage context={context} oscName={active.organization.name} />
+                <UsersPermissionsPage context={context} oscName={active.organization.name} partnershipName={selected?.title ?? null} />
               ) : (
                 <p className={ds.error} role="alert">
                   Acesso negado: você não tem competência para gerir permissões nesta OSC.
@@ -133,6 +175,7 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
                 canManagePermissions={canManage}
                 onConsultPartnerships={() => navigate('parcerias')}
                 onUsersAndPermissions={() => navigate('usuarios')}
+                partnershipLabel={partnershipLabel}
               />
             )
           // `key` = OSC ativa: a troca de contexto descarta todo o estado da OSC anterior (U05).
@@ -161,7 +204,7 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
   return (
     <OscShell
       title={title}
-      pageKey={`${active?.oscId ?? 'nenhuma'}:${route}`}
+      pageKey={`${active?.oscId ?? 'nenhuma'}:${route}:${location.partnershipId ?? ''}`}
       description={description}
       oscSelector={oscSelector}
       navigation={navigation}

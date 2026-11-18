@@ -40,17 +40,17 @@ Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines
 ```
 .
 ├── public/               # Arquivos estáticos servidos sem processamento (favicon)
-├── api/                  # Funções de servidor da Vercel (DEV-01.3): /api/osc-permissions
+├── api/                  # Funções da Vercel: /api/osc-permissions (DEV-01.3), /api/osc-partnerships (DEV-02.1)
 │   └── _lib/             # Lógica do servidor (não exposta como rota)
 ├── src/
 │   ├── assets/           # Imagens, ícones e fontes importados pelo código
 │   ├── components/       # Compartilhados (ds/: componentes do DS-05; osc/: contexto; AuthGate, providers)
 │   ├── config/           # Configurações centrais (app.ts, firebase.ts)
-│   ├── domain/           # Regras de negócio puras compartilhadas com o servidor (authorization.ts)
+│   ├── domain/           # Regras de negócio puras compartilhadas com o servidor (authorization.ts, partnerships.ts)
 │   ├── hooks/            # Hooks React (useAuthState, useAuthActions)
 │   ├── layouts/          # Estruturas de página (BaseLayout)
-│   ├── pages/            # Páginas (Osc/: PAG-OSC01 a 03; Auth/: login; Home/: diagnóstico)
-│   ├── services/         # Serviços (firebase/: inicialização; auth/: autenticação; organizations/: vínculos)
+│   ├── pages/            # Páginas (Osc/: PAG-OSC01 a 03, partnerships/ PAG-OSC02/04; Auth/: login; Home/: diagnóstico)
+│   ├── services/         # Serviços (firebase/, auth/, organizations/: vínculos, permissions/, partnerships/)
 │   ├── styles/           # tokens.css (DS-05) e estilos globais
 │   ├── types/            # Tipos TypeScript compartilhados
 │   ├── utils/            # Funções utilitárias puras (validation.ts)
@@ -584,7 +584,7 @@ altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do D
 | CNPJ e quantidade de parcerias (OSC01) | Exibidos | Ausentes | Não existem no modelo de dados (sem dados inventados) |
 | Situação cadastral (OSC01) | Ausente | Exibida | Exigida pela DEV-01.4 (dado real) |
 | Administrador único (OSC01) | Nome | "Você" / "Designado pela administração da plataforma" | Nome de terceiros não é legível pelo cliente (Security Rules) |
-| Lista de parcerias, pesquisa, seleção (OSC02) | Dados fictícios e operações simuladas | Estado indisponível, controles desabilitados | Módulo não implementado |
+| Lista de parcerias, pesquisa, seleção (OSC02) | Dados fictícios e operações simuladas | Dados reais da OSC (DEV-02.1); "Cadastrar parceria" substituído pela pendência | Cadastro não especificado (10.7) |
 | Administrador "Todas as operacionais" (OSC03) | Sim | Contagem real das permissões | Regra da DEV-01.3: administrador **sem** permissões implícitas |
 | Catálogo de permissões (OSC03) | 15 permissões | 6 permissões de consulta | Catálogo vigente (DEV-01.3); alinhamento pendente — ver 9.5 |
 | Convidar / Desvincular usuário | Botões (simulação) | Não exibidos; aviso de implementação futura | Funcionalidades não implementadas |
@@ -625,7 +625,152 @@ altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do D
   foco mantido durante o processamento; anúncios em `role="status"`/`role="alert"`; sem violações
   no axe-core (WCAG 2.2 AA).
 
-## 10. Publicação na Vercel
+## 10. Gestão de Parcerias: consulta, pesquisa e seleção (DEV-02.1)
+
+**Situação:** a consulta, a pesquisa, a seleção e a identificação da parceria estão **implementadas**.
+O **cadastro está preparado e BLOQUEADO**: a permissão `partnerships.edit` continua "pendente de
+especificação" no catálogo, e nenhuma documentação homologada a especifica (ver 10.7). O cadastro
+**não** está concluído.
+
+### 10.1 Referências consultadas
+
+| Referência | Uso | Observação |
+| --- | --- | --- |
+| HF-G05 (homologado por HF-V06), PAG-OSC02 e PAG-OSC04 | Layout da lista (colunas Parceria/instrumento, Vigência, Situação, Acesso; "Selecionar"/"Selecionada"), campos da Identificação da Parceria, rótulos de situação | No protótipo, "Cadastrar parceria" exibe **"Cadastro de parceria fora do escopo deste incremento (PRT-G01): operação não simulada"** |
+| AF-01, entregas 2 a 6 | MT-3 (troca de OSC descarta a parceria), MT-4 (só parcerias da OSC), NV-1 (PAG-OSC02 → PAG-OSC04 direto), NV-2 (parceria mantida entre páginas), AF-01-08/11 | AF-01 está "Candidata à Validação" (aguarda AF-V01) |
+| PD-01-P01 (relatório parcial) | Decisões pendentes PD-01-D01 a D05; "Modelo de permissões consolidado: **não verificável**" | Não concluído: a Frente A (inventário FUN) está suspensa |
+| DS-05 Parte 2 | `status.partnership.*` (Em execução, Suspensa, Arquivada) | "Encerrada" não tem token (AF-01-11): usa o estilo neutro de Arquivada |
+| Inventário Funcional V1.0 (FUN) e Modelo de Negócio | **Não localizados** (repositório, canvas e Google Drive) | Os identificadores RC-004 a RC-019 do pedido vêm de inventário reconstruído e **não** substituem os FUN |
+
+### 10.2 Matriz de campos do cadastro
+
+Legenda da fonte: **H** = protótipo homologado (HF-G05, PAG-OSC04); **L** = Lei 13.019/2014; **P** = pedido
+da DEV-02.1; **T** = proposta técnica desta etapa (a confirmar). Nenhuma regra **T** está homologada.
+
+| Campo (Firestore) | Tipo | Obrigatório | Fonte | Validação | TC | TF | AC |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` | texto (ID do documento) | Gerado pelo servidor | P, T | Imutável; igual ao ID do caminho | ✓ | ✓ | ✓ |
+| `oscId` | texto | Gerado pelo servidor | P | Igual à OSC do caminho; nunca enviado pelo cliente | ✓ | ✓ | ✓ |
+| `instrument` | `termo-colaboracao` \| `termo-fomento` \| `acordo-cooperacao` | Sim | H, L, P | Somente os três; qualquer outro é recusado | ✓ | ✓ | ✓ |
+| `instrumentNumber` | texto | Sim | H ("Número da Parceria") | 1–40 caracteres, sem caracteres de controle | ✓ | ✓ | ✓ |
+| `publicPartner` | texto | Sim | H ("Ente Concedente (órgão público)") | 3–200 caracteres | ✓ | ✓ | ✓ |
+| `object` | texto | Sim | H ("Objeto") | 10–1000 caracteres | ✓ | ✓ | ✓ |
+| `administrativeProcess` | texto ou nulo | Não | H ("Processo Administrativo") | Até 60 caracteres | ✓ | ✓ | ✓ |
+| `formalizationDate` | data AAAA-MM-DD | Sim | H ("Data de Celebração"), P | Data válida; ≥ 23/01/2016 (vigência da Lei, **T**); não futura (somente formalizadas) | ✓ | ✓ | ✓ |
+| `termStart` | data | Sim | H ("Período de Vigência"), P | ≥ data de formalização (**T**) | ✓ | ✓ | ✓ |
+| `termEnd` | data | Sim | H, P | > início; não anterior a hoje (**T**: encerradas aguardam PD-01-D05) | ✓ | ✓ | ✓ |
+| `globalValueCents` | inteiro (centavos) ou nulo | TC/TF: sim; AC: **proibido** | H ("Valor Global"), L (art. 2º, VIII-A: AC sem transferência) | Inteiro positivo; AC com valor é recusado | ✓ | ✓ | — |
+| `administrativeStatus` | `em-execucao` \| `suspensa` \| `encerrada` \| `arquivada` | Gerado pelo servidor | H, P | Inicial sempre `em-execucao`; **não** escolhido pelo usuário | ✓ | ✓ | ✓ |
+| `workPlan.approvalDeclared` | booleano | Sim (declaração) | P | Deve ser `true` | ✓ | ✓ | ✓ |
+| `workPlan.document` | `not-incorporated` | Gerado pelo servidor | P | Nunca "validado" nesta versão | ✓ | ✓ | ✓ |
+| `createdAt`, `updatedAt` | carimbo do servidor | Gerado | P | `serverTimestamp()` | ✓ | ✓ | ✓ |
+| `createdBy`, `updatedBy` | UID | Gerado | P | UID do token verificado | ✓ | ✓ | ✓ |
+| `uniqueKey` | texto | Gerado | T | instrumento + número + órgão normalizados; único por OSC | ✓ | ✓ | ✓ |
+| `creationRequestId` | texto | Gerado a partir do pedido | T | Idempotência: reenvio do mesmo pedido não duplica | ✓ | ✓ | ✓ |
+
+Não incluídos (não homologados ou fora do escopo): contrapartida e forma de repasse (H, ainda sem regra),
+prorrogações (registro próprio, JOR-13), alterações formais, CNPJ, documentos e versões do Plano de Trabalho.
+
+**Plano de Trabalho aprovado:** a parceria só é cadastrada com a **declaração** de que o instrumento está
+formalizado e o Plano foi aprovado pela administração pública. O documento **não** é incorporado nem
+conferido (o Storage continua bloqueado). A interface informa: "Aprovação declarada no cadastro. Documento
+ainda não incorporado ao SIGOSC; sem conferência documental." Não há metas, custos ou versões.
+
+### 10.3 Modelo no Firestore
+
+```
+oscs/{oscId}/partnerships/{partnershipId}     → identificação da parceria (estrutura de 10.2)
+oscs/{oscId}/partnershipEvents/{eventId}      → auditoria imutável: action, oscId, partnershipId,
+                                                actorUid, actorAuthority, at (sem o conteúdo do cadastro)
+```
+
+Isolamento pelo **caminho** da OSC (mesmo padrão de `members` e `permissionEvents`). Consulta ordenada por
+`createdAt` decrescente, **25 por página** com cursor ("Carregar mais parcerias"). Índices: apenas os de
+campo único, criados automaticamente; nenhum índice composto ou de grupo de coleções. Nenhum documento é
+criado automaticamente; dados fictícios existem **somente** nos emuladores (`tests/support/partnershipFixtures.ts`).
+
+### 10.4 Security Rules
+
+```
+match /oscs/{oscId}/partnerships/{partnershipId} {
+  allow get, list: if canConsult(oscId, 'partnerships.view');
+}
+```
+
+`canConsult` exige: vínculo ativo e consistente, OSC ativa, a permissão individual `partnerships.view`
+e, durante a suspensão comercial, que o solicitante seja o administrador único (regra homologada "AO:
+consultar/exportar"). **Nenhuma escrita** pelo cliente; `partnershipEvents` continua ilegível; consulta por
+grupo de coleções negada. O avaliador de domínio ganhou a operação equivalente `consult`.
+
+### 10.5 Permissões exigidas
+
+| Operação | Exige | Onde é decidida |
+| --- | --- | --- |
+| Consultar, pesquisar e selecionar parcerias | `partnerships.view` concedida individualmente (administrador **sem** permissão implícita) | Security Rules (`canConsult`) + interface |
+| Consultar durante suspensão comercial | Administrador único **com** `partnerships.view` | Security Rules |
+| Cadastrar parceria | `partnerships.edit` — **pendente de especificação** → negado a todos (`pending-specification`) | Servidor (`/api/osc-partnerships`) |
+
+O catálogo **não** foi alterado: `partnerships.edit` não é concedível, e o administrador ou o delegado não
+podem concedê-la. Nenhuma permissão foi concedida automaticamente.
+
+### 10.6 Jornada (PAG-OSC02 → PAG-OSC04)
+
+1. **Parcerias** (PAG-OSC02): lista paginada da OSC ativa, pesquisa imediata (instrumento, número,
+   objeto, órgão; sem acentos e sem diferença de maiúsculas), situação e vigência visíveis sem abrir nada.
+2. **Selecionar** (um clique): define o contexto e abre diretamente a **Identificação da Parceria** (NV-1),
+   em `#/parcerias/{id}`.
+3. A faixa de contexto mostra "Parceria: Termo de Fomento 02/2026 · Suspensa" em todas as páginas; a barra
+   lateral ganha "Identificação da parceria" (NV-2).
+4. **Troca de OSC**: a parceria é descartada, a navegação volta à lista e a nova OSC é consultada (MT-3).
+5. **URL manipulada**: o identificador é sempre consultado sob a OSC ativa; parceria de outra OSC aparece
+   como "Parceria não encontrada nesta OSC", sem dados (as regras também negam).
+
+**PAG-OSC04:** implementado apenas o mínimo para **consultar** a identificação (dados da parceria, situação
+e período, informações do instrumento). As abas "Dados Complementares" e "Situação e Histórico",
+prorrogação, alteração formal, arquivamento e histórico **não** foram implementados nem exibidos como
+botões; uma nota informa que aguardam implementação. A página não é a PAG-OSC04 homologada completa.
+
+Abaixo de 720 px, a lista vira cartões (mesmo ponto de troca da UX-001), com botões de 44 px.
+
+### 10.7 Cadastro: preparado e bloqueado (decisão pendente)
+
+Implementado, mas **inacessível**:
+- `src/domain/partnerships.ts`: validação compartilhada e `decidePartnershipRegistration`.
+- `api/osc-partnerships.ts` + `api/_lib/partnershipsService.ts`: verificação do token, formato estrito
+  (situação, autoria ou OSC no corpo → 400), transação, validação com a data do servidor (Brasília),
+  idempotência, unicidade, autoria, carimbos do servidor e auditoria.
+- `PartnershipForm`: uma tela, instrumento por seleção simples, valor global só para TC/TF, mensagens por
+  campo, bloqueio de envio duplicado, sucesso só após a confirmação do servidor.
+
+A política de produção nega todo cadastro com `pending-specification` (403), depois de verificar sessão,
+vínculo e suspensão comercial. **Não existe** variável, parâmetro ou cabeçalho que a habilite. A interface
+não exibe "Cadastrar parceria"; mostra a pendência.
+
+**Decisão necessária (impeditiva para o cadastro):** especificar a competência `partnerships.edit`:
+1. cadastro e edição são uma permissão só ou duas (`partnerships.create` × `partnerships.edit`)?
+2. quem pode recebê-la (administrador? delegado?) e se o administrador a tem por padrão (hoje: não);
+3. se a suspensão administrativa da parceria (PD-01-D01 a D04) restringe edições;
+4. se parcerias com vigência encerrada podem ser incorporadas (PD-01-D05) e com qual situação;
+5. confirmação das regras **T** de 10.2 (datas mínimas, unicidade, valor global obrigatório em TC/TF).
+
+Habilitar exigirá uma evolução que mude o catálogo (`status: 'grantable'`) e acrescente os testes de concessão.
+
+### 10.8 Implantação no Firebase/Vercel de TESTES (manual)
+
+Nada foi publicado. Para o Preview:
+1. **Regras** (necessário): publicar `firestore.rules` no projeto de **testes**, pelo procedimento de 7.6
+   (somente as regras; não há novos índices). Sem isso, a lista mostra "consulta negada pelas regras".
+2. **Permissão de consulta**: conceder "Consultar parcerias da OSC" pela matriz de Usuários e Permissões
+   (administrador ou delegado). Hoje o administrador não pode receber permissões pelo sistema (8.9):
+   valide com um usuário operacional.
+3. **Dados**: o Firebase de testes não tem parcerias, e o cadastro está bloqueado. Para validar a lista,
+   é preciso **autorização específica** para criar manualmente (Console, como administrador da plataforma)
+   documentos em `oscs/osc-teste-alfa/partnerships/{id}` com os campos de 10.2. Reversão: excluir os
+   documentos. Sem isso, a lista exibe o estado vazio, comportamento correto.
+4. **Função `/api/osc-partnerships`**: usa as mesmas variáveis da 8.7; sem elas responde 503. Mesmo
+   configurada, responde 403 `pending-specification`. Nenhuma credencial nova.
+
+## 11. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
 2. A Vercel detecta o preset **Vite** automaticamente:
@@ -639,13 +784,15 @@ altura de controle 40 px e alvo mínimo 44 px. Nenhum valor foi criado fora do D
 e o preset Vite da Vercel já define build e diretório de saída. Quando um roteador SPA for adotado,
 será necessário adicionar uma regra de *rewrite* para `index.html`.
 
-## 11. Estado atual
+## 12. Estado atual
 
 | Item | Situação |
 | --- | --- |
 | Frontend React + TypeScript + Vite | Inicializado |
 | Página técnica de verificação | Implementada (exibida quando a configuração é inválida) |
-| Interface de alta fidelidade PAG-OSC01 a 03 | Integrada (DEV-01.4); PAG-OSC02 apenas estrutura visual; PAG-OSC03 em matriz (UX-001) |
+| Interface de alta fidelidade PAG-OSC01 a 03 | Integrada (DEV-01.4); PAG-OSC03 em matriz (UX-001) |
+| Parcerias: consulta, pesquisa, seleção e identificação (PAG-OSC02 e consulta da PAG-OSC04) | Implementado (DEV-02.1); **regras ainda não publicadas** no Firebase de testes |
+| Cadastro de parcerias | **Preparado e bloqueado**: `partnerships.edit` pendente de especificação (10.7) |
 | Firebase SDK (App, Auth, Firestore, Storage) | Instâncias inicializadas quando a configuração é válida (DEV-00.7) |
 | Security Rules Firestore/Storage (negação integral) | Criadas e testadas em emulador; publicação no Firebase de testes pendente |
 | Autenticação (login, recuperação de senha, logout, sessão local) | Implementada (DEV-01.1) — interface técnica provisória |
@@ -653,6 +800,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Regras Multi-Tenant de leitura | Implementadas e testadas em emulador; **publicação no Firebase de testes pendente** |
 | Permissões individuais, delegação, suspensão comercial (DEV-01.3) | Implementado e testado em emuladores; **operações de servidor não configuradas** no Preview |
 | Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
+| Plano de Trabalho, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.
