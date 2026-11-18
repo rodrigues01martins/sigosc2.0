@@ -247,7 +247,7 @@ describe('Isolamento e manipulação', () => {
       assert.deepEqual(response, { status: 400, body: { error: 'invalid-request' } })
     }
     // Permissões inexistentes, pendentes ou genéricas.
-    for (const permission of ['admin', 'all', '*', 'partnerships.edit', 'users.invite', '']) {
+    for (const permission of ['admin', 'all', '*', 'financial.edit', 'users.invite', '']) { // DEC-PAR-001: partnerships.edit agora é concedível
       denied(await grant(USERS.MULTI, PERMISSION_USERS.OPERATOR, permission), 'invalid-permission')
     }
     // Identificadores com caminho embutido (tentativa de outra OSC/coleção).

@@ -3,10 +3,19 @@ import { InfoIcon, LockIcon } from '../../../components/ds/icons.tsx'
 import ds from '../../../components/ds/ds.module.css'
 import { ContextBar } from '../../../components/osc/ContextBar.tsx'
 import { DENIAL_MESSAGE, evaluate, type AuthorizationContext } from '../../../domain/authorization.ts'
-import { CONSULT_PERMISSION, hasFinancialTransfer, instrumentOf, partnershipTitle } from '../../../domain/partnerships.ts'
+import {
+  CONSULT_PERMISSION,
+  EDIT_PERMISSION,
+  PARTNERSHIP_MESSAGE,
+  allowsNewOperationalRecords,
+  decidePartnershipEdit,
+  instrumentOf,
+  partnershipTitle,
+} from '../../../domain/partnerships.ts'
 import { usePartnershipDependencies } from '../../../hooks/partnershipsContext.ts'
 import type { Partnership, PartnershipErrorKind } from '../../../services/partnerships/types.ts'
 import { PARTNERSHIP_LOAD_ERROR, formatDate, formatMoney, formatTerm, formatTimestamp } from './format.ts'
+import { PartnershipEditForm } from './PartnershipEditForm.tsx'
 import { PartnershipStatus } from './PartnershipStatus.tsx'
 import styles from './Partnerships.module.css'
 
@@ -67,6 +76,8 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
   const { service } = usePartnershipDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
   const callbacks = useRef({ onResolved, onNotFound })
   useEffect(() => {
     callbacks.current = { onResolved, onNotFound }
@@ -139,9 +150,55 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
 
   const p = state.partnership
   const instrument = instrumentOf(p.instrument)
+  const edit = decidePartnershipEdit(context, p.administrativeStatus)
+  const hasEditPermission = evaluate(context, { kind: 'operate', permission: EDIT_PERMISSION }).allowed
+  // Recarrega da fonte confiável SEM desmontar a página (o formulário de correção mantém os valores).
+  const refresh = () => setAttempt((n) => n + 1)
+  const value =
+    p.globalValueStatus === 'not-applicable'
+      ? 'Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros.'
+      : p.globalValueStatus === 'not-informed'
+        ? 'Não informado no SIGOSC.'
+        : formatMoney(p.globalValueCents ?? 0)
   return (
     <>
       <ContextBar oscName={oscName} partnership={partnershipLabel} />
+
+      {!allowsNewOperationalRecords(p.administrativeStatus) ? (
+        <p className={styles.banner} role="note">
+          <strong>Parceria arquivada.</strong>&nbsp;Consulta preservada; novos registros e alterações estão bloqueados. O desarquivamento
+          compete exclusivamente à Administração da Plataforma.
+        </p>
+      ) : null}
+      {saved ? (
+        <p className={ds.success} role="status">
+          {saved}
+        </p>
+      ) : null}
+      {edit.allowed ? (
+        editing ? (
+          <PartnershipEditForm
+            partnership={p}
+            onCancel={() => setEditing(false)}
+            onSaved={(changed) => {
+              setEditing(false)
+              setSaved(changed ? 'Dados cadastrais corrigidos. As informações abaixo foram confirmadas pelo servidor.' : 'Nenhuma alteração necessária: os dados já estavam registrados.')
+              refresh()
+            }}
+            onStale={refresh}
+          />
+        ) : (
+          <span className={styles.touch}>
+            <button type="button" className={ds.secondary} onClick={() => { setSaved(null); setEditing(true) }}>
+              Corrigir dados cadastrais
+            </button>
+          </span>
+        )
+      ) : hasEditPermission && edit.reason !== 'partnership-archived' && PARTNERSHIP_MESSAGE[edit.reason] ? (
+        <p className={ds.warning} role="note">
+          {PARTNERSHIP_MESSAGE[edit.reason]}
+        </p>
+      ) : null}
 
       <section className={ds.card} aria-labelledby="osc04-dados">
         <div className={ds.stack}>
@@ -186,6 +243,14 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
             </dd>
           </div>
           <div>
+            <dt>Situação declarada</dt>
+            <dd>
+              {p.administrativeStatusDeclaredAt
+                ? `Informada no cadastro em ${formatTimestamp(p.administrativeStatusDeclaredAt)}${p.administrativeStatusDeclaredBy === context.uid ? ' · por você' : ''}; não é validação jurídica do SIGOSC.`
+                : 'Registro anterior à declaração de situação.'}
+            </dd>
+          </div>
+          <div>
             <dt>Data de formalização</dt>
             <dd>{formatDate(p.formalizationDate)}</dd>
           </div>
@@ -214,13 +279,7 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
         <dl className={styles.dl}>
           <div>
             <dt>Valor global</dt>
-            <dd>
-              {hasFinancialTransfer(p.instrument)
-                ? p.globalValueCents !== null
-                  ? formatMoney(p.globalValueCents)
-                  : 'Não informado'
-                : 'Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros.'}
-            </dd>
+            <dd>{value}</dd>
           </div>
           <div>
             <dt>Plano de Trabalho aprovado</dt>
@@ -239,7 +298,10 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
           </div>
           <div>
             <dt>Última alteração no SIGOSC</dt>
-            <dd>{formatTimestamp(p.updatedAt)}</dd>
+            <dd>
+              {formatTimestamp(p.updatedAt)}
+              {p.updatedBy && p.updatedBy === context.uid ? ' · por você' : ''}
+            </dd>
           </div>
         </dl>
       </section>
@@ -247,7 +309,7 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
       <p className={ds.info}>
         <InfoIcon />
         <span>
-          Consulta da identificação. Demais abas e ações da Identificação da Parceria (prorrogação, alterações formais e
+          Demais abas e ações da Identificação da Parceria (prorrogação, alterações formais, transições de situação e
           arquivamento) aguardam implementação.
         </span>
       </p>

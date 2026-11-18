@@ -392,3 +392,44 @@
   align-items: center;
   gap: var(--ds-space-3);
 }
+
+/* DEV-02.1-C01: grupos do formulário e avisos não impeditivos */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-3);
+  margin: 0;
+  padding: var(--ds-space-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--ds-border-subtle);
+  min-width: 0;
+}
+
+.groupTitle {
+  padding: 0;
+  margin-bottom: var(--ds-space-2);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--ds-fg-default);
+}
+
+.fieldWarning {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ds-feedback-warning-fg);
+}
+
+.banner {
+  composes: readOnly from '../../../components/ds/ds.module.css';
+}
+
+/* Alvos de toque de 44 px em larguras estreitas (mesmo ponto de troca da UX-001). */
+@media (max-width: 719px) {
+  .actions button,
+  .registration button,
+  .touch button {
+    min-height: 44px;
+  }
+}

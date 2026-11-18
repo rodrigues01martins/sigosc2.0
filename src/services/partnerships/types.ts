@@ -1,4 +1,4 @@
-import type { AdministrativeStatus, InstrumentId } from '../../domain/partnerships.ts'
+import type { AdministrativeStatus, GlobalValueStatus, InstrumentId } from '../../domain/partnerships.ts'
 import type { OrganizationErrorKind } from '../organizations/types.ts'
 
 /**
@@ -16,14 +16,22 @@ export interface Partnership {
   readonly formalizationDate: string
   readonly termStart: string
   readonly termEnd: string
-  /** Centavos; `null` para Acordo de Cooperação. */
+  /** DEC-PAR-005: informado, não informado ou não aplicável (AC) — nunca confundidos com zero. */
+  readonly globalValueStatus: GlobalValueStatus
+  /** Centavos somente quando `informed`. */
   readonly globalValueCents: number | null
   readonly administrativeStatus: AdministrativeStatus
+  /** DEC-PAR-006: situação declarada no cadastro (data e autor), quando registrada. */
+  readonly administrativeStatusDeclaredAt: Date | null
+  readonly administrativeStatusDeclaredBy: string | null
+  /** Revisão para alteração cadastral com controle de concorrência (documentos antigos = 1). */
+  readonly revision: number
   /** O Plano de Trabalho aprovado foi DECLARADO no cadastro; o documento não está no SIGOSC. */
   readonly workPlanApprovalDeclared: boolean
   readonly createdAt: Date | null
   readonly createdBy: string | null
   readonly updatedAt: Date | null
+  readonly updatedBy: string | null
 }
 
 export type PartnershipErrorKind = OrganizationErrorKind

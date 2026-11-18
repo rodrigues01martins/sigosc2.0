@@ -2,7 +2,7 @@
  * Validação defensiva das parcerias lidas do Firestore (DEV-02.1). Documentos fora do
  * formato, de outro caminho ou de outra OSC são DESCARTADOS (falha fechada).
  */
-import { isAdministrativeStatus, isInstrument, isValidDate } from '../../domain/partnerships.ts'
+import { isAdministrativeStatus, isInstrument, isValidDate, type GlobalValueStatus } from '../../domain/partnerships.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
 import type { Partnership } from './types.ts'
 
@@ -28,9 +28,16 @@ export function parsePartnership(raw: RawDocument, oscId: string): Partnership |
   if (!isInstrument(d.instrument) || !isAdministrativeStatus(d.administrativeStatus)) return null
   if (!str(d.instrumentNumber) || !str(d.publicPartner) || !str(d.object)) return null
   if (!isValidDate(d.formalizationDate) || !isValidDate(d.termStart) || !isValidDate(d.termEnd)) return null
-  const value = d.globalValueCents
-  const globalValueCents = typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+  // Valor global: esquema C01 (`globalValueStatus`) ou anterior (derivado sem inventar valores).
+  const cents = typeof d.globalValueCents === 'number' && Number.isSafeInteger(d.globalValueCents) && d.globalValueCents >= 0 ? d.globalValueCents : null
+  let globalValueStatus: GlobalValueStatus
+  if (d.instrument === 'acordo-cooperacao') globalValueStatus = 'not-applicable'
+  else if (d.globalValueStatus === 'informed' && cents !== null) globalValueStatus = 'informed'
+  else if (d.globalValueStatus === 'not-informed') globalValueStatus = 'not-informed'
+  else if (d.globalValueStatus === undefined) globalValueStatus = cents !== null && cents > 0 ? 'informed' : 'not-informed'
+  else return null
   const workPlan = d.workPlan as Record<string, unknown> | undefined
+  const revision = typeof d.revision === 'number' && Number.isSafeInteger(d.revision) && d.revision >= 1 ? d.revision : 1
   return {
     id,
     oscId,
@@ -42,11 +49,16 @@ export function parsePartnership(raw: RawDocument, oscId: string): Partnership |
     formalizationDate: d.formalizationDate,
     termStart: d.termStart,
     termEnd: d.termEnd,
-    globalValueCents: d.instrument === 'acordo-cooperacao' ? null : globalValueCents,
+    globalValueStatus,
+    globalValueCents: globalValueStatus === 'informed' ? cents : null,
     administrativeStatus: d.administrativeStatus,
+    administrativeStatusDeclaredAt: toDate(d.administrativeStatusDeclaredAt),
+    administrativeStatusDeclaredBy: typeof d.administrativeStatusDeclaredBy === 'string' ? d.administrativeStatusDeclaredBy : null,
+    revision,
     workPlanApprovalDeclared: workPlan?.approvalDeclared === true,
     createdAt: toDate(d.createdAt),
     createdBy: typeof d.createdBy === 'string' ? d.createdBy : null,
     updatedAt: toDate(d.updatedAt),
+    updatedBy: typeof d.updatedBy === 'string' ? d.updatedBy : null,
   }
 }

@@ -2,10 +2,11 @@
  * Parcerias SIMULADAS (DEV-02.1) para testes de interface — em memória, sem rede.
  * NÃO valida Security Rules (feito no emulador, `npm run test:rules`): reproduz apenas o
  * isolamento por CAMINHO (`oscs/{oscId}/partnerships`) e a ordenação/paginação.
- * O cadastro simulado responde, por padrão, como a política de PRODUÇÃO: 403 `pending-specification`.
+ * O cadastro e a correção simulados, por padrão, GRAVAM no mapa em memória (como o servidor confirmaria),
+ * sem decidir autorização — a autorização real é testada em tests/server com emuladores.
  */
 import type { PartnershipsSdk } from '../../src/services/partnerships/partnershipService.ts'
-import type { CreateRequest, CreateResult, PartnershipsApi } from '../../src/services/partnerships/partnershipsApi.ts'
+import type { CreateRequest, CreateResult, PartnershipsApi, UpdateRequest, UpdateResult } from '../../src/services/partnerships/partnershipsApi.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import { PARTNERSHIPS, partnershipDocument, partnershipPath, type PartnershipFixture } from './partnershipFixtures.ts'
 
@@ -50,11 +51,44 @@ export function createFakePartnerships(fixtures: PartnershipFixture[] = PARTNERS
   }
 
   const requests: CreateRequest[] = []
-  let respond: (request: CreateRequest) => Promise<CreateResult> | CreateResult = () => ({ ok: false, error: 'forbidden', reason: 'pending-specification' })
+  const updates: UpdateRequest[] = []
+  let sequence = 0
+  let respond: (request: CreateRequest) => Promise<CreateResult> | CreateResult = (request) => {
+    const id = `criada${++sequence}xxxxxxxxx`
+    const now = new Date()
+    docs.set(`oscs/${request.oscId}/partnerships/${id}`, {
+      ...request.draft,
+      schemaVersion: 2,
+      id,
+      oscId: request.oscId,
+      administrativeStatusDeclaredAt: now,
+      administrativeStatusDeclaredBy: 'simulado',
+      workPlan: { approvalDeclared: true, document: 'not-incorporated' },
+      revision: 1,
+      createdAt: now,
+      createdBy: 'simulado',
+      updatedAt: now,
+      updatedBy: 'simulado',
+    })
+    return { ok: true, id, created: true, warnings: {} }
+  }
+  let respondUpdate: (request: UpdateRequest) => Promise<UpdateResult> | UpdateResult = (request) => {
+    const path = `oscs/${request.oscId}/partnerships/${request.partnershipId}`
+    const current = docs.get(path)
+    if (!current) return { ok: false, error: 'not-found' }
+    const revision = (current.revision as number | undefined) ?? 1
+    if (revision !== request.expectedRevision) return { ok: false, error: 'stale' }
+    docs.set(path, { ...current, ...request.changes, revision: revision + 1, updatedAt: new Date() })
+    return { ok: true, id: request.partnershipId, changed: true, revision: revision + 1 }
+  }
   const api: PartnershipsApi = {
     async create(request) {
       requests.push(request)
       return respond(request)
+    },
+    async update(request) {
+      updates.push(request)
+      return respondUpdate(request)
     },
   }
 
@@ -65,9 +99,13 @@ export function createFakePartnerships(fixtures: PartnershipFixture[] = PARTNERS
     docs,
     calls,
     requests,
+    updates,
     failures,
     respondWith(handler: typeof respond) {
       respond = handler
+    },
+    respondUpdateWith(handler: typeof respondUpdate) {
+      respondUpdate = handler
     },
     hold() {
       let release!: () => void

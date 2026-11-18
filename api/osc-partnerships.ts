@@ -1,9 +1,8 @@
 /**
- * Função de servidor da Vercel: /api/osc-partnerships (DEV-02.1).
+ * Função de servidor da Vercel: /api/osc-partnerships (DEV-02.1, complemento C01).
  *
- * POST {oscId, requestId, draft} → cadastro de parceria formalizada.
- * PREPARADO E BLOQUEADO: enquanto `partnerships.edit` estiver pendente de especificação,
- * toda requisição autenticada recebe 403 `pending-specification` (ver `_lib/partnershipsService.ts`).
+ * POST  {oscId, requestId, draft, acknowledgeDuplicates?}            → cadastro (`partnerships.create`).
+ * PATCH {oscId, partnershipId, requestId, expectedRevision, changes} → correção cadastral (`partnerships.edit`).
  * A consulta de parcerias NÃO passa por aqui: é feita pelo cliente sob as Security Rules.
  *
  * Mesmo padrão da DEV-01.3-FIX01: o Firebase Admin SDK é carregado SOB DEMANDA, somente
@@ -30,7 +29,7 @@ function loadServerModules() {
 }
 
 async function readBody(req: VercelRequest): Promise<string> {
-  if (req.method !== 'POST') return ''
+  if (req.method !== 'POST' && req.method !== 'PATCH') return ''
   if ('body' in req && req.body !== undefined) {
     const { body } = req
     if (typeof body === 'string') return body
@@ -54,7 +53,6 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
   try {
     const { handlePartnershipsRequest, getServerDeps } = await loadServerModules()
     const url = new URL(req.url ?? '/', 'http://localhost')
-    // Sem opções: a política de produção (bloqueio por especificação pendente) é a ÚNICA possível aqui.
     const result = await handlePartnershipsRequest(
       { method: req.method, authorization: req.headers.authorization, query: url.searchParams, rawBody: await readBody(req) },
       getServerDeps(),

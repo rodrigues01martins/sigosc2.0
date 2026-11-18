@@ -27,6 +27,8 @@ export function permissionCell(context: AuthorizationContext, readOnly: boolean,
   const granted = member.permissions.includes(permission)
   const action: MutationAction = granted ? 'revoke-permission' : 'grant-permission'
   if (readOnly) return { granted, action, blockedBy: 'commercial-suspension' }
+  // DEC-PAR-002: a linha do administrador único é sempre protegida (Administração da Plataforma).
+  if (member.isAdministrator) return { granted, action, blockedBy: 'target-is-administrator' }
   const decision = evaluate(context, { kind: action, target: factsOf(member), permission })
   return { granted, action, blockedBy: decision.allowed ? null : decision.reason }
 }

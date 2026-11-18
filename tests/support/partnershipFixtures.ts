@@ -17,14 +17,18 @@ export interface PartnershipFixture {
   termStart?: string
   termEnd?: string
   globalValueCents?: number | null
+  globalValueStatus?: 'informed' | 'not-informed' | 'not-applicable'
+  revision?: number
   createdAt?: Date
 }
 
 /** Documento completo como o servidor o gravaria (estrutura `oscs/{oscId}/partnerships/{id}`). */
 export function partnershipDocument(p: PartnershipFixture) {
   const instrument = p.instrument ?? 'termo-colaboracao'
+  const cooperation = instrument === 'acordo-cooperacao'
+  const valueStatus = cooperation ? 'not-applicable' : (p.globalValueStatus ?? (p.globalValueCents === null ? 'not-informed' : 'informed'))
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: p.id,
     oscId: p.oscId,
     instrument,
@@ -35,11 +39,16 @@ export function partnershipDocument(p: PartnershipFixture) {
     formalizationDate: '2026-02-20',
     termStart: p.termStart ?? '2026-03-01',
     termEnd: p.termEnd ?? '2028-02-28',
-    globalValueCents: instrument === 'acordo-cooperacao' ? null : (p.globalValueCents ?? 15_000_000),
+    globalValueStatus: valueStatus,
+    globalValueCents: valueStatus === 'informed' ? (p.globalValueCents ?? 15_000_000) : null,
     administrativeStatus: p.administrativeStatus ?? 'em-execucao',
+    administrativeStatusSource: 'declared-at-registration',
+    administrativeStatusDeclaredAt: p.createdAt ?? CREATED,
+    administrativeStatusDeclaredBy: 'uid-ficticio-operator',
     workPlan: { approvalDeclared: true, document: 'not-incorporated' },
-    uniqueKey: `${instrument}|${p.instrumentNumber ?? '06/2026'}|${p.id}`,
+    duplicateCheckKey: `${instrument}|${p.instrumentNumber ?? '06/2026'}|${p.id}`,
     creationRequestId: `req-${p.id}`,
+    revision: p.revision ?? 1,
     createdAt: p.createdAt ?? CREATED,
     createdBy: 'uid-ficticio-operator',
     updatedAt: p.createdAt ?? CREATED,
@@ -51,7 +60,7 @@ export function partnershipDocument(p: PartnershipFixture) {
 export const PARTNERSHIPS: PartnershipFixture[] = [
   { id: 'pAlfaColaboracao06', oscId: OSCS.ALFA.id, instrument: 'termo-colaboracao', instrumentNumber: '06/2026', object: 'Oficinas socioeducativas no contraturno escolar.', createdAt: new Date('2026-04-03T12:00:00Z') },
   { id: 'pAlfaFomento02xxxxx', oscId: OSCS.ALFA.id, instrument: 'termo-fomento', instrumentNumber: '02/2026', object: 'Fomento a hortas comunitárias urbanas.', administrativeStatus: 'suspensa', termEnd: '2027-12-31', createdAt: new Date('2026-04-02T12:00:00Z') },
-  { id: 'pAlfaCooperacao01xx', oscId: OSCS.ALFA.id, instrument: 'acordo-cooperacao', instrumentNumber: '01/2026', publicPartner: 'Fundação Pública Fictícia de Cultura', object: 'Cessão de espaço para atividades culturais.', termEnd: '2027-06-30', createdAt: new Date('2026-04-01T12:00:00Z') },
+  { id: 'pAlfaCooperacao01xx', oscId: OSCS.ALFA.id, instrument: 'acordo-cooperacao', administrativeStatus: 'arquivada', instrumentNumber: '01/2026', publicPartner: 'Fundação Pública Fictícia de Cultura', object: 'Cessão de espaço para atividades culturais.', termEnd: '2027-06-30', createdAt: new Date('2026-04-01T12:00:00Z') },
   { id: 'pGamaColaboracao09x', oscId: OSCS.GAMA.id, instrument: 'termo-colaboracao', instrumentNumber: '09/2026', object: 'Atendimento fictício exclusivo da OSC Gama.', createdAt: new Date('2026-04-04T12:00:00Z') },
 ]
 

@@ -12,8 +12,10 @@ rules_version = '2';
 //   oscs/{oscId}/members/{uid}  → cada usuário lê apenas o PRÓPRIO vínculo (ativo ou inativo).
 // DEV-02.1: exceção MÍNIMA de LEITURA para parcerias:
 //   oscs/{oscId}/partnerships/{id} → get/list somente com canConsult(oscId, 'partnerships.view').
-//   Nenhuma escrita pelo cliente (cadastro preparado no servidor e BLOQUEADO: permissão
-//   'partnerships.edit' pendente de especificação). Eventos de auditoria permanecem ilegíveis.
+//   Nenhuma escrita pelo cliente: cadastro ('partnerships.create') e correção cadastral
+//   ('partnerships.edit') ocorrem SOMENTE pelo servidor (/api/osc-partnerships, Admin SDK) —
+//   DEV-02.1-C01. Eventos de auditoria (partnershipEvents) e marcadores de idempotência
+//   (partnershipRequests) permanecem ilegíveis e não graváveis pelo cliente (negação por padrão).
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo

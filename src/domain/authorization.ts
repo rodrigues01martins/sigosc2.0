@@ -57,8 +57,11 @@ export const PERMISSION_CATALOG = [
   // administrador/delegado, não permissão operacional. Convites ainda não especificados.
   { id: 'users.invite', module: 'users', label: 'Convidar usuários para a OSC', status: 'pending-specification' },
 
+  // DEC-PAR-001 (DEV-02.1-C01): três competências independentes; nenhuma implica outra.
+  // `partnerships.edit` mantém o identificador original, agora restrito à EDIÇÃO.
   { id: 'partnerships.view', module: 'partnerships', label: 'Consultar parcerias da OSC', status: 'grantable' },
-  { id: 'partnerships.edit', module: 'partnerships', label: 'Registrar e editar parcerias', status: 'pending-specification' },
+  { id: 'partnerships.create', module: 'partnerships', label: 'Cadastrar parcerias formalizadas', status: 'grantable' },
+  { id: 'partnerships.edit', module: 'partnerships', label: 'Alterar dados cadastrais de parcerias', status: 'grantable' },
 
   { id: 'work-plan.view', module: 'work-plan', label: 'Consultar Planos de Trabalho', status: 'grantable' },
   { id: 'work-plan.edit', module: 'work-plan', label: 'Elaborar e editar Planos de Trabalho', status: 'pending-specification' },
@@ -228,7 +231,9 @@ export function evaluate(context: AuthorizationContext, operation: Operation): D
       const { target } = operation
       if (!target) return deny('target-not-member')
       if (target.uid === uid) return deny('self-modification')
-      if (authority === 'delegate' && target.uid === organization.administratorUid) return deny('target-is-administrator')
+      // DEC-PAR-002: permissões operacionais do administrador único só pela Administração da
+      // Plataforma (operação ainda não implementada) — nem ele próprio, nem delegado, nem terceiros.
+      if (target.uid === organization.administratorUid) return deny('target-is-administrator')
       if (operation.kind === 'grant-permission' && target.status !== 'active') return deny('target-not-active')
       return { allowed: true, authority }
     }
@@ -261,6 +266,6 @@ export const DENIAL_MESSAGE: Record<DenialReason, string> = {
   'permission-not-granted': 'Permissão não concedida.',
   'target-not-member': 'O usuário não possui vínculo com esta OSC.',
   'target-not-active': 'O vínculo do usuário está inativo.',
-  'target-is-administrator': 'As permissões do administrador da OSC não podem ser alteradas por delegado.',
+  'target-is-administrator': 'As permissões operacionais do administrador único só podem ser alteradas pela Administração da Plataforma.',
   'self-modification': 'Não é permitido alterar as próprias permissões ou delegação.',
 }

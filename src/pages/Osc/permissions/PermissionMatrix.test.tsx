@@ -63,11 +63,29 @@ describe('Estrutura da matriz', () => {
     expect(headers[0]).toBe('Usuário · vínculo e competência')
     expect(headers).toHaveLength(1 + GRANTABLE_PERMISSIONS.length + 1)
     expect(headers.at(-1)).toContain('Delegação')
-    expect(headers.join(' ')).not.toMatch(/Cadastrar parceria|Editar plano|Registrar e editar receitas/)
+    // DEC-PAR-001 aprovou o cadastro de parcerias; as demais permissões do protótipo antigo continuam fora.
+    expect(headers.join(' ')).not.toMatch(/Editar plano|Registrar e editar receitas|Convidar usuários/)
+    expect(headers.filter((h) => h.includes('Gestão de parcerias'))).toHaveLength(3)
   })
 })
 
 describe('Alteração direta', () => {
+  it('DEV-02.1-C01-T09 — cadastro e edição de parcerias: colunas próprias, um clique para conceder e revogar', async () => {
+    const { server } = await openMatrix(USERS.MULTI)
+    for (const label of ['Cadastrar parcerias formalizadas', 'Alterar dados cadastrais de parcerias']) {
+      expect(cell(label, OPERATOR.email).getAttribute('aria-pressed')).toBe('false')
+      fireEvent.click(cell(label, OPERATOR.email))
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      await waitFor(() => expect(cell(label, OPERATOR.email).getAttribute('aria-pressed')).toBe('true'))
+    }
+    expect(truth(server, OPERATOR.uid)?.permissions).toEqual(['partnerships.view', 'partnerships.create', 'partnerships.edit'])
+    fireEvent.click(cell('Cadastrar parcerias formalizadas', OPERATOR.email))
+    await waitFor(() => expect(cell('Cadastrar parcerias formalizadas', OPERATOR.email).getAttribute('aria-pressed')).toBe('false'))
+    expect(truth(server, OPERATOR.uid)?.permissions).toEqual(['partnerships.view', 'partnerships.edit'])
+    // O administrador não altera as próprias (DEC-PAR-002): células bloqueadas, sem botão.
+    expect(within(rowOf(USERS.MULTI.email)).queryByRole('button', { name: /^Cadastrar parcerias formalizadas/ })).toBeNull()
+  })
+
   it('T03/T05 — um clique concede, sem confirmação adicional, e o estado vem do servidor', async () => {
     const { server } = await openMatrix(USERS.MULTI)
     const button = cell('Consultar documentos', OPERATOR.email)
@@ -175,7 +193,7 @@ describe('Autorização (decidida pelo servidor)', () => {
     await openMatrix(DELEGATE)
     const row = rowOf(USERS.MULTI.email)
     expect(within(row).queryAllByRole('button')).toHaveLength(0)
-    expect(within(row).getAllByText('Administrador')).toHaveLength(GRANTABLE_PERMISSIONS.length)
+    expect(within(row).getAllByText('Adm. da Plataforma')).toHaveLength(GRANTABLE_PERMISSIONS.length) // DEC-PAR-002
     expect(screen.getAllByRole('columnheader').some((h) => h.textContent?.includes('Delegação'))).toBe(false)
     expect(screen.queryByRole('button', { name: /delegação/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Exportar relação (CSV)' })).toBeNull()
@@ -289,7 +307,9 @@ describe('Estados vazios, pesquisa e acessibilidade', () => {
       expect(name).toMatch(/^.+ — .+@exemplo\.invalid: (Concedida|Não concedida)$/)
       expect(name.endsWith(button.textContent ?? '')).toBe(true)
     }
-    const blocked = within(rowOf(USERS.MULTI.email)).getAllByText(/bloqueada — não é permitido alterar as próprias permissões/)
-    expect(blocked.length).toBe(GRANTABLE_PERMISSIONS.length + 1) // permissões + delegação
+    // DEC-PAR-002: permissões do administrador único só pela Administração da Plataforma; delegação: própria.
+    const row = within(rowOf(USERS.MULTI.email))
+    expect(row.getAllByText(/bloqueada — as permissões operacionais do administrador único só podem ser alteradas pela Administração da Plataforma/)).toHaveLength(GRANTABLE_PERMISSIONS.length)
+    expect(row.getAllByText(/bloqueada — não é permitido alterar as próprias permissões/)).toHaveLength(1)
   })
 })

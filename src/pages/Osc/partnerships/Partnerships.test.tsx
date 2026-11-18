@@ -16,6 +16,7 @@ import { renderOscApp, type RenderOptions } from '../../../../tests/support/rend
 import { PartnershipsProvider } from '../../../components/PartnershipsProvider.tsx'
 import { createPartnershipService } from '../../../services/partnerships/partnershipService.ts'
 import { PartnershipForm, SAVE_FAILURE } from './PartnershipForm.tsx'
+import type { ApiFailure } from '../../../services/partnerships/partnershipsApi.ts'
 
 const originalMatchMedia = window.matchMedia
 afterEach(() => {
@@ -115,7 +116,7 @@ describe('Seleção e contexto da parceria', () => {
     expect(screen.getByText(/Não se aplica: Acordo de Cooperação/)).toBeTruthy()
     fireEvent.click(within(nav()).getByRole('button', { name: 'Identificação da OSC' }))
     await waitFor(() => expect(title()).toBe('Identificação da OSC'))
-    expect(contextText()).toContain('Parceria: Acordo de Cooperação 01/2026 · Em execução')
+    expect(contextText()).toContain('Parceria: Acordo de Cooperação 01/2026 · Arquivada')
     fireEvent.click(within(nav()).getByRole('button', { name: 'Usuários e permissões' }))
     await waitFor(() => expect(title()).toBe('Usuários e Permissões'))
     expect(contextText()).toContain('Parceria: Acordo de Cooperação 01/2026')
@@ -164,11 +165,11 @@ describe('Seleção e contexto da parceria', () => {
 })
 
 describe('Permissões, suspensão e cadastro bloqueado', () => {
-  it('DEV-02.1-T13 — cadastro indisponível: sem botão "Cadastrar parceria" e com a pendência explicada', async () => {
+  it('DEV-02.1-C01-T03 — sem partnerships.create: sem botão "Cadastrar parceria" e com orientação', async () => {
     await openList()
     await screen.findByRole('table')
     expect(screen.queryByRole('button', { name: 'Cadastrar parceria' })).toBeNull()
-    expect(screen.getByRole('note').textContent).toMatch(/aguarda a especificação da competência de registro/)
+    expect(screen.getByRole('note').textContent).toBe('Você pode consultar as parcerias desta organização, mas não possui autorização para cadastrá-las.')
   })
 
   it('DEV-02.1-T13 — administrador sem a permissão de consulta não vê parcerias (sem permissões implícitas)', async () => {
@@ -263,7 +264,100 @@ describe('Estados vazios, erros, paginação e responsividade', () => {
   })
 })
 
-describe('Formulário de cadastro (rotina PREPARADA; exibida só quando autorizada)', () => {
+/** Concede permissões ao OPERADOR em ALFA no Firestore simulado. */
+const operatorWith = (permissions: string[]): RenderOptions['prepare'] => (db) => {
+  const path = memberPath({ oscId: OSCS.ALFA.id, uid: OPERATOR.uid })
+  db.docs.set(path, { ...db.docs.get(path), permissions })
+}
+
+describe('DEV-02.1-C01 — cadastro real na interface (servidor simulado; autorização real em tests/server)', () => {
+  it('DEV-02.1-C01-T02 — com create e view: cadastro em uma tela e acesso direto à identificação criada', async () => {
+    const { partnerships } = await openList(OPERATOR, { prepare: operatorWith(['partnerships.view', 'partnerships.create']) })
+    await screen.findByRole('table')
+    fireEvent.click(screen.getByRole('button', { name: 'Cadastrar parceria' }))
+    expect(screen.getByText(/OSC proprietária:/).textContent).toContain(OSCS.ALFA.name)
+    fillValid('Termo de Fomento', 'Suspensa')
+    fill(/Valor global constante/, '150.000,00')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    await screen.findByRole('heading', { level: 2, name: 'Termo de Fomento 77/2026' })
+    expect(title()).toBe('Identificação da Parceria')
+    expect(contextText()).toContain('Parceria: Termo de Fomento 77/2026 · Suspensa')
+    expect(partnerships.requests[0]?.draft).toMatchObject({ globalValueStatus: 'informed', globalValueCents: 15_000_000, administrativeStatus: 'suspensa' })
+  })
+
+  it('DEV-02.1-C01 — somente create: formulário disponível, lista oculta e confirmação sem conceder consulta', async () => {
+    const { partnerships } = await openList(OPERATOR, { prepare: operatorWith(['partnerships.create']) })
+    await screen.findByRole('heading', { name: 'Cadastro de parcerias' })
+    expect(screen.queryByRole('table')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Cadastrar parceria' }))
+    fillValid('Acordo de Cooperação', 'Encerrada')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    expect((await screen.findByRole('status')).textContent).toMatch(/Parceria cadastrada com sucesso\. Para consultá-la, é necessária a permissão/)
+    expect(title()).toBe('Parcerias')
+    expect(partnerships.calls).toEqual([]) // nenhuma consulta foi feita
+  })
+
+  it('DEV-02.1-C01-T04 — correção cadastral com edit: campos limitados, confirmação do servidor e revisão', async () => {
+    window.location.hash = '#/parcerias/pAlfaColaboracao06'
+    const { partnerships } = renderOscApp(OPERATOR, { prepare: operatorWith(['partnerships.view', 'partnerships.edit']) })
+    await screen.findByRole('heading', { level: 2, name: 'Termo de Colaboração 06/2026' })
+    fireEvent.click(screen.getByRole('button', { name: 'Corrigir dados cadastrais' }))
+    expect(screen.queryByLabelText(/Término da vigência/)).toBeNull() // campos protegidos fora da correção
+    expect(screen.queryByLabelText(/Valor global/)).toBeNull()
+    fireEvent.change(screen.getByLabelText('Objeto (descrição resumida)'), { target: { value: 'Objeto corrigido.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar correção' }))
+    expect((await screen.findByRole('status')).textContent).toMatch(/Dados cadastrais corrigidos/)
+    await screen.findByText('Objeto corrigido.')
+    expect(partnerships.updates[0]).toMatchObject({ expectedRevision: 1, changes: { object: 'Objeto corrigido.' } })
+  })
+
+  it('DEV-02.1-C01-T05 — somente create (com view): sem correção cadastral', async () => {
+    window.location.hash = '#/parcerias/pAlfaColaboracao06'
+    renderOscApp(OPERATOR, { prepare: operatorWith(['partnerships.view', 'partnerships.create']) })
+    await screen.findByRole('heading', { level: 2, name: 'Termo de Colaboração 06/2026' })
+    expect(screen.queryByRole('button', { name: 'Corrigir dados cadastrais' })).toBeNull()
+  })
+
+  it('DEV-02.1-C01-T16 — parceria arquivada: identificada, consulta preservada, correção bloqueada', async () => {
+    window.location.hash = '#/parcerias/pAlfaCooperacao01xx'
+    renderOscApp(OPERATOR, { prepare: operatorWith(['partnerships.view', 'partnerships.edit']) })
+    await screen.findByRole('heading', { level: 2, name: 'Acordo de Cooperação 01/2026' })
+    expect(screen.getByRole('note', { name: '' }).textContent).toMatch(/Parceria arquivada\..*desarquivamento compete exclusivamente à Administração da Plataforma/)
+    expect(screen.queryByRole('button', { name: 'Corrigir dados cadastrais' })).toBeNull()
+    expect(screen.getAllByText('Arquivada').length).toBeGreaterThan(0)
+  })
+
+  it('Correção concorrente: aviso, dados recarregados e valores digitados mantidos', async () => {
+    window.location.hash = '#/parcerias/pAlfaColaboracao06'
+    const { partnerships } = renderOscApp(OPERATOR, { prepare: operatorWith(['partnerships.view', 'partnerships.edit']) })
+    await screen.findByRole('heading', { level: 2, name: 'Termo de Colaboração 06/2026' })
+    fireEvent.click(screen.getByRole('button', { name: 'Corrigir dados cadastrais' }))
+    partnerships.docs.set('oscs/osc-alfa/partnerships/pAlfaColaboracao06', { ...partnerships.docs.get('oscs/osc-alfa/partnerships/pAlfaColaboracao06'), revision: 2 })
+    fireEvent.change(screen.getByLabelText('Objeto (descrição resumida)'), { target: { value: 'Minha correção.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar correção' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/alterada por outra pessoa/)
+    expect((screen.getByLabelText('Objeto (descrição resumida)') as HTMLTextAreaElement).value).toBe('Minha correção.')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar correção' }))
+    await waitFor(() => expect(partnerships.updates.at(-1)?.expectedRevision).toBe(2))
+  })
+})
+
+function fill(label: RegExp | string, value: string) {
+  fireEvent.change(screen.getByLabelText(label), { target: { value } })
+}
+function fillValid(instrument: string, status = 'Em execução') {
+  fireEvent.click(screen.getByRole('radio', { name: instrument }))
+  fill(/Número ou identificação/, '77/2026')
+  fill(/Órgão ou entidade pública/, 'Secretaria Fictícia')
+  fill(/^Objeto/, 'Oficinas.')
+  fill(/Data de formalização/, '2026-02-20')
+  fill(/Início da vigência/, '2026-03-01')
+  fill(/Término da vigência/, '2028-02-28')
+  fireEvent.click(screen.getByRole('radio', { name: status }))
+  fireEvent.click(screen.getByRole('checkbox', { name: /Declaro que o instrumento/ }))
+}
+
+describe('Formulário de cadastro (DEV-02.1-C01)', () => {
   function renderForm(respond?: Parameters<ReturnType<typeof createFakePartnerships>['respondWith']>[0]) {
     const fake = createFakePartnerships([])
     if (respond) fake.respondWith(respond)
@@ -271,91 +365,121 @@ describe('Formulário de cadastro (rotina PREPARADA; exibida só quando autoriza
     render(
       <StrictMode>
         <PartnershipsProvider value={{ service: createPartnershipService(fake.db, fake.sdk), api: fake.api }}>
-          <PartnershipForm oscId={OSCS.ALFA.id} today="2026-11-17" onCancel={() => undefined} onCreated={(id) => created.push(id)} />
+          <PartnershipForm oscId={OSCS.ALFA.id} oscName={OSCS.ALFA.name} today="2026-11-17" onCancel={() => undefined} onCreated={(id) => created.push(id)} />
         </PartnershipsProvider>
       </StrictMode>,
     )
     return { fake, created }
   }
-  const fill = (label: RegExp | string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
-  function fillValid(instrument: string) {
-    fireEvent.click(screen.getByRole('radio', { name: instrument }))
-    fill(/Número ou identificação/, '06/2026')
-    fill(/Órgão ou entidade pública/, 'Secretaria Fictícia')
-    fill(/Objeto/, 'Oficinas socioeducativas fictícias.')
-    fill(/Data de formalização/, '2026-02-20')
-    fill(/Início da vigência/, '2026-03-01')
-    fill(/Término da vigência/, '2028-02-28')
-    fireEvent.click(screen.getByRole('checkbox'))
-  }
 
-  it('DEV-02.1-T09/T10 — TC e TF exigem valor global; AC não exibe nem envia o campo (T11)', async () => {
+  it('DEV-02.1-C01-T10/T11/T12 — TC/TF: valor informado ou "não informado" (≠ zero); AC sem campo de valor', async () => {
     const { fake } = renderForm()
-    fireEvent.click(screen.getByRole('radio', { name: 'Termo de Colaboração' }))
-    expect(screen.getByLabelText(/Valor global/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('radio', { name: 'Termo de Fomento' }))
-    expect(screen.getByLabelText(/Valor global/)).toBeTruthy()
-    fillValid('Acordo de Cooperação')
-    expect(screen.queryByLabelText(/Valor global/)).toBeNull()
-    expect(screen.getByRole('note').textContent).toMatch(/sem transferência de recursos financeiros/)
+    fillValid('Termo de Colaboração')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Valor global não informado/ }))
+    expect((screen.getByLabelText(/Valor global constante/) as HTMLInputElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
     await waitFor(() => expect(fake.requests).toHaveLength(1))
-    expect(fake.requests[0]?.draft.globalValueCents).toBeNull()
-    expect(fake.requests[0]?.draft.instrument).toBe('acordo-cooperacao')
+    expect(fake.requests[0]?.draft).toMatchObject({ instrument: 'termo-colaboracao', globalValueStatus: 'not-informed', globalValueCents: null })
+    cleanup()
+    const second = renderForm()
+    fillValid('Acordo de Cooperação')
+    expect(screen.queryByLabelText(/Valor global constante/)).toBeNull()
+    expect(screen.getByRole('note').textContent).toMatch(/sem transferência de recursos financeiros/)
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    await waitFor(() => expect(second.fake.requests).toHaveLength(1))
+    expect(second.fake.requests[0]?.draft).toMatchObject({ globalValueStatus: 'not-applicable', globalValueCents: null })
   })
 
-  it('DEV-02.1-T15 — formulário inválido: resumo com os campos, mensagens associadas e nenhum envio', async () => {
+  it('DEV-02.1-C01-T13/T17/T18 — vigência encerrada e datas históricas com avisos, sem bloqueio; situação escolhida', async () => {
     const { fake } = renderForm()
+    fillValid('Acordo de Cooperação', 'Em execução')
+    fill(/Data de formalização/, '2015-10-01')
+    fill(/Início da vigência/, '2015-09-01')
+    fill(/Término da vigência/, '2017-08-31')
+    expect(screen.getByText(/Formalização anterior a 23\/01\/2016/)).toBeTruthy()
+    expect(screen.getByText(/Início da vigência anterior à formalização/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    await waitFor(() => expect(fake.requests).toHaveLength(1))
+    expect(fake.requests[0]?.draft).toMatchObject({ termEnd: '2017-08-31', administrativeStatus: 'em-execucao' })
+  })
+
+  it('DEV-02.1-C01-T15/T16 — situação obrigatória e sem padrão; orientação para arquivada', async () => {
+    const { fake } = renderForm()
+    expect(screen.queryAllByRole('radio', { checked: true })).toHaveLength(0)
     fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
     const summary = await screen.findByRole('alert')
-    expect(summary.textContent).toMatch(/Corrija 8 campos antes de salvar/)
-    const number = screen.getByLabelText(/Número ou identificação/)
-    expect(number.getAttribute('aria-invalid')).toBe('true')
-    expect(number.getAttribute('aria-describedby')).toMatch(/error/)
-    fillValid('Termo de Colaboração')
-    fill(/Valor global/, '12,3,4')
-    fill(/Término da vigência/, '2026-02-01')
-    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Corrija 2 campos/))
-    expect(screen.getByText('Informe um valor monetário válido (ex.: 150.000,00).', { selector: 'p' })).toBeTruthy()
-    expect(screen.getByText('O término da vigência deve ser posterior ao início.', { selector: 'p' })).toBeTruthy()
+    expect(summary.textContent).toMatch(/Selecione a situação administrativa efetiva da parceria/)
+    fireEvent.click(screen.getByRole('radio', { name: 'Arquivada' }))
+    expect(screen.getByText(/novos registros bloqueados; desarquivar só pela Administração da Plataforma/)).toBeTruthy()
     expect(fake.requests).toHaveLength(0)
   })
 
-  it('DEV-02.1-T15 — submissão duplicada bloqueada e falha preservando "nenhum cadastro confirmado"', async () => {
+  it('DEV-02.1-C01-T19 — possível duplicidade: aviso com dados e confirmação explícita (mesmo pedido)', async () => {
+    let calls = 0
+    const { fake, created } = renderForm((request) => {
+      calls += 1
+      if (!request.acknowledgeDuplicates) {
+        return {
+          ok: false,
+          error: 'possible-duplicate',
+          duplicates: { count: 1, candidates: [{ id: 'p1', title: 'Termo de Fomento 77/2026', publicPartner: 'Secretaria Fictícia', formalizationDate: '2026-02-20', termStart: '2026-03-01', termEnd: '2028-02-28', administrativeStatus: 'em-execucao', sameDates: true }] },
+        } satisfies ApiFailure
+      }
+      return { ok: true, id: 'nova', created: true, warnings: {} }
+    })
+    fillValid('Termo de Fomento')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Valor global não informado/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/Possível duplicidade/)
+    expect(alert.textContent).toMatch(/provável recadastramento do mesmo instrumento/)
+    expect(created).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar cadastro de instrumento distinto' }))
+    await waitFor(() => expect(created).toEqual(['nova']))
+    expect(calls).toBe(2)
+    expect(fake.requests[1]?.acknowledgeDuplicates).toBe(true)
+    expect(fake.requests[1]?.requestId).toBe(fake.requests[0]?.requestId)
+  })
+
+  it('DEV-02.1-C01-T20 — envio duplicado bloqueado; falha de rede mantém os dados; nova tentativa com o mesmo pedido', async () => {
     let release!: () => void
     const { fake, created } = renderForm(() => new Promise((resolve) => (release = () => resolve({ ok: false, error: 'network' }))))
     fillValid('Termo de Fomento')
-    fill(/Valor global/, '150.000,00')
+    fill(/Valor global constante/, '150.000,00')
     const save = screen.getByRole('button', { name: 'Salvar parceria' })
     fireEvent.click(save)
     fireEvent.click(save)
     fireEvent.submit(save.closest('form') as HTMLFormElement)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvando…' })).toBeTruthy())
     expect(fake.requests).toHaveLength(1)
-    expect(fake.requests[0]?.draft.globalValueCents).toBe(15_000_000)
     await act(async () => release())
-    expect((await screen.findByRole('alert')).textContent).toBe(`${SAVE_FAILURE} Verifique a conexão e tente novamente.`)
+    expect((await screen.findByRole('alert')).textContent).toBe(`${SAVE_FAILURE} Verifique a conexão e tente novamente: os dados preenchidos foram mantidos.`)
+    expect((screen.getByLabelText(/Número ou identificação/) as HTMLInputElement).value).toBe('77/2026')
     expect(created).toEqual([])
-    // Nova tentativa reutiliza o mesmo identificador de pedido (idempotência no servidor).
-    fake.respondWith(() => ({ ok: true, id: 'nova-parceria', created: true }))
+    fake.respondWith(() => ({ ok: true, id: 'nova-parceria', created: true, warnings: {} }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
     await waitFor(() => expect(created).toEqual(['nova-parceria']))
     expect(fake.requests[1]?.requestId).toBe(fake.requests[0]?.requestId)
   })
 
-  it('DEV-02.1-T13 — resposta do servidor "pendente de especificação" nunca é tratada como sucesso', async () => {
-    const { created } = renderForm()
+  it('DEV-02.1-C01-T21/T22 — negações do servidor nunca são tratadas como sucesso', async () => {
+    const { created } = renderForm(() => ({ ok: false, error: 'forbidden', reason: 'commercial-suspension' }))
     fillValid('Acordo de Cooperação')
     fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
-    expect((await screen.findByRole('alert')).textContent).toMatch(/aguarda a especificação da competência de registro/)
+    expect((await screen.findByRole('alert')).textContent).toBe('A OSC está com a situação comercial suspensa. Novos registros estão bloqueados.')
     expect(created).toEqual([])
   })
 
-  it('DEV-02.1-T15 — erros de campo devolvidos pelo servidor são exibidos nos campos', async () => {
-    renderForm(() => ({ ok: false, error: 'invalid-draft', fields: { termEnd: 'term-ended' } }))
+  it('Formulário inválido: resumo, mensagens associadas aos campos e erros devolvidos pelo servidor', async () => {
+    const { fake } = renderForm(() => ({ ok: false, error: 'invalid-draft', fields: { termEnd: 'end-before-start' } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Corrija 9 campos antes de salvar/)
+    const number = screen.getByLabelText(/Número ou identificação/)
+    expect(number.getAttribute('aria-invalid')).toBe('true')
+    expect(number.getAttribute('aria-describedby')).toMatch(/error/)
+    expect(fake.requests).toHaveLength(0)
     fillValid('Acordo de Cooperação')
     fireEvent.click(screen.getByRole('button', { name: 'Salvar parceria' }))
-    expect(await screen.findByText('A vigência já terminou. Parcerias encerradas não podem ser incorporadas nesta versão.', { selector: 'p' })).toBeTruthy()
+    expect(await screen.findByText('O término da vigência não pode ser anterior ao início.', { selector: 'p' })).toBeTruthy()
   })
 })

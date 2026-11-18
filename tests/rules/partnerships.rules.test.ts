@@ -87,6 +87,19 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     }
   })
 
+  test('DEV-02.1-C01 — permissões de cadastro/edição não liberam escrita direta nem leitura sem partnerships.view', async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['partnerships.create', 'partnerships.edit'] })
+      await admin.firestore().doc(`oscs/${ALFA}/partnershipRequests/${operator}_pedido-1`).set({ partnershipId: 'parceria-alfa-1' })
+    })
+    const db = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertFails(db.doc(alfaPath).get()) // create/edit não implicam consulta (DEC-PAR-001)
+    await assertFails(db.collection(`oscs/${ALFA}/partnerships`).add(partnershipDocument({ id: 'x', oscId: ALFA })))
+    await assertFails(db.doc(alfaPath).update({ object: 'alterado' }))
+    await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipRequests/${operator}_pedido-1`).get())
+    await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipRequests/${operator}_pedido-2`).set({ partnershipId: 'x' }))
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())

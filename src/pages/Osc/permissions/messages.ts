@@ -69,7 +69,7 @@ export function successMessage(action: MutationAction, who: string, permission: 
 /** Motivos de bloqueio exibidos na célula (texto curto + descrição acessível). */
 export const BLOCK_REASON: Partial<Record<DenialReason, { short: string; long: string }>> = {
   'self-modification': { short: 'Próprio usuário', long: 'não é permitido alterar as próprias permissões' },
-  'target-is-administrator': { short: 'Administrador', long: 'as permissões do administrador único não podem ser alteradas por delegado' },
+  'target-is-administrator': { short: 'Adm. da Plataforma', long: 'as permissões operacionais do administrador único só podem ser alteradas pela Administração da Plataforma' },
   'target-not-active': { short: 'Vínculo inativo', long: 'vínculo inativo não recebe novas permissões' },
   'commercial-suspension': { short: 'Somente consulta', long: 'alterações bloqueadas pela suspensão comercial' },
   'not-authorized': { short: 'Sem autorização', long: 'sem competência para alterar esta permissão' },

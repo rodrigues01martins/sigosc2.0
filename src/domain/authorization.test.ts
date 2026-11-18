@@ -41,7 +41,7 @@ test('Catálogo: IDs estáveis, únicos, por módulo, sem identificadores genér
 test('sanitizePermissions: legado, textos livres e tipos inválidos não concedem nada', () => {
   assert.deepEqual(sanitizePermissions(undefined), [])
   assert.deepEqual(sanitizePermissions('partnerships.view'), [])
-  assert.deepEqual(sanitizePermissions(['admin', 'all', '*', 'partnerships.edit', 7, null]), [])
+  assert.deepEqual(sanitizePermissions(['admin', 'all', '*', 'financial.edit', 7, null]), []) // DEC-PAR-001: exemplo pendente trocado
   assert.deepEqual(sanitizePermissions(['documents.view', 'partnerships.view', 'documents.view']), ['partnerships.view', 'documents.view'])
 })
 
@@ -79,7 +79,7 @@ test('Concessão: permissão válida, alvo ativo, sem autoconcessão; delegado n
   assert.deepEqual(grant(delegate, admin), { allowed: false, reason: 'target-is-administrator' })
   assert.deepEqual(grant(admin, null), { allowed: false, reason: 'target-not-member' })
   assert.deepEqual(grant(admin, member('t2', { status: 'inactive' })), { allowed: false, reason: 'target-not-active' })
-  for (const bad of ['partnerships.edit', 'admin', 'all', '*', '', 42]) {
+  for (const bad of ['financial.edit', 'admin', 'all', '*', '', 42]) {
     assert.deepEqual(grant(admin, target, bad), { allowed: false, reason: 'invalid-permission' })
   }
   // Revogação de vínculo inativo é permitida (reduz privilégios).
@@ -107,5 +107,7 @@ test('Operação futura exige permissão individual; administrador não tem perm
   assert.equal(evaluate(ctx(op), { kind: 'operate', permission: 'partnerships.view' }).allowed, true)
   assert.deepEqual(evaluate(ctx(op), { kind: 'operate', permission: 'financial.view' }), { allowed: false, reason: 'permission-not-granted' })
   assert.deepEqual(evaluate(ctx(member('admin')), { kind: 'operate', permission: 'partnerships.view' }), { allowed: false, reason: 'permission-not-granted' })
-  assert.deepEqual(evaluate(ctx(op), { kind: 'operate', permission: 'partnerships.edit' }), { allowed: false, reason: 'invalid-permission' })
+  assert.deepEqual(evaluate(ctx(op), { kind: 'operate', permission: 'financial.edit' }), { allowed: false, reason: 'invalid-permission' })
+  // DEC-PAR-001: partnerships.edit é concedível; sem concessão individual, é negada.
+  assert.deepEqual(evaluate(ctx(op), { kind: 'operate', permission: 'partnerships.edit' }), { allowed: false, reason: 'permission-not-granted' })
 })

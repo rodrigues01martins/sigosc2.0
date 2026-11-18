@@ -1,6 +1,6 @@
 /**
  * Ponto único da Gestão de Parcerias (DEV-02.1): consulta (Firestore, sob as Security
- * Rules) e cliente do cadastro (servidor; preparado e bloqueado).
+ * Rules) e cliente do cadastro e da correção cadastral (servidor, DEV-02.1-C01).
  */
 import { getFirebaseServices } from '../firebase/index.ts'
 import { createPartnershipService } from './partnershipService.ts'

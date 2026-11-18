@@ -5,10 +5,12 @@ import { ContextBar } from '../../../components/osc/ContextBar.tsx'
 import { DENIAL_MESSAGE, evaluate, type AuthorizationContext } from '../../../domain/authorization.ts'
 import {
   CONSULT_PERMISSION,
-  REGISTRATION_MESSAGE,
-  decidePartnershipRegistration,
+  NO_CREATE_PERMISSION_MESSAGE,
+  PARTNERSHIP_MESSAGE,
+  decidePartnershipCreation,
   normalizeForSearch,
   partnershipTitle,
+  type PartnershipDecision,
 } from '../../../domain/partnerships.ts'
 import { useMediaQuery } from '../../../hooks/useMediaQuery.ts'
 import type { Partnership } from '../../../services/partnerships/types.ts'
@@ -35,15 +37,17 @@ function searchableText(p: Partnership): string {
 }
 
 /**
- * PAG-OSC02 — Parcerias (DEV-02.1). Consulta, pesquisa e seleção das parcerias
- * formalizadas da OSC ativa (layout HF-G05). A consulta exige `partnerships.view`
- * (Security Rules); o cadastro aparece somente se autorizado — hoje, bloqueado
- * por especificação pendente, sem botão inoperante.
+ * PAG-OSC02 — Parcerias (DEV-02.1 e C01). Consulta, pesquisa e seleção das parcerias
+ * formalizadas da OSC ativa (layout HF-G05). Consulta (`partnerships.view`) e cadastro
+ * (`partnerships.create`) são competências INDEPENDENTES (DEC-PAR-001): quem só cadastra
+ * vê o formulário, mas não a lista.
  */
 export function PartnershipsPage(props: Props) {
   const { context, oscName, partnershipLabel } = props
   const consult = evaluate(context, { kind: 'consult', permission: CONSULT_PERMISSION })
+  const creation = decidePartnershipCreation(context)
 
+  if (!consult.allowed && creation.allowed) return <CreateOnly {...props} creation={creation} />
   if (!consult.allowed) {
     const message =
       consult.reason === 'permission-not-granted'
@@ -69,6 +73,65 @@ export function PartnershipsPage(props: Props) {
   return <AuthorizedPartnerships {...props} />
 }
 
+function registrationNotice(decision: Extract<PartnershipDecision, { allowed: false }>) {
+  const message =
+    decision.reason === 'permission-not-granted'
+      ? NO_CREATE_PERMISSION_MESSAGE
+      : (PARTNERSHIP_MESSAGE[decision.reason] ?? (decision.reason in DENIAL_MESSAGE ? DENIAL_MESSAGE[decision.reason as keyof typeof DENIAL_MESSAGE] : ''))
+  return (
+    <p className={decision.reason === 'commercial-suspension' ? ds.warning : ds.info} role="note">
+      <InfoIcon />
+      <span>{message}</span>
+    </p>
+  )
+}
+
+/** Quem possui SOMENTE `partnerships.create`: cadastra, mas não consulta (sem permissão implícita). */
+function CreateOnly({ context, oscName, partnershipLabel }: Props & { creation: PartnershipDecision }) {
+  const [formOpen, setFormOpen] = useState(false)
+  const [createdCount, setCreatedCount] = useState(0)
+  return (
+    <>
+      <ContextBar oscName={oscName} partnership={partnershipLabel} />
+      {createdCount > 0 ? (
+        <p className={ds.success} role="status">
+          Parceria cadastrada com sucesso. Para consultá-la, é necessária a permissão “Consultar parcerias da OSC”, concedida pelo
+          administrador ou por um delegado.
+        </p>
+      ) : null}
+      <section className={ds.card} aria-labelledby="osc02-somente-cadastro">
+        <h2 id="osc02-somente-cadastro" className={ds.sectionTitle}>
+          Cadastro de parcerias
+        </h2>
+        <p className={ds.muted}>
+          Você possui autorização para cadastrar parcerias formalizadas desta OSC, mas não para consultá-las. A lista de parcerias não é
+          exibida.
+        </p>
+        {formOpen ? null : (
+          <span className={styles.touch}>
+            <button type="button" className={ds.highlight} onClick={() => setFormOpen(true)}>
+              <PlusIcon />
+              Cadastrar parceria
+            </button>
+          </span>
+        )}
+      </section>
+      {formOpen ? (
+        <PartnershipForm
+          key={createdCount}
+          oscId={context.oscId}
+          oscName={oscName}
+          onCancel={() => setFormOpen(false)}
+          onCreated={() => {
+            setFormOpen(false)
+            setCreatedCount((n) => n + 1)
+          }}
+        />
+      ) : null}
+    </>
+  )
+}
+
 function AuthorizedPartnerships({ context, oscName, partnershipLabel, selectedId, onSelect, onCreated }: Props) {
   const { state, retry, loadMore } = usePartnershipList(context.oscId)
   const [query, setQuery] = useState('')
@@ -76,7 +139,7 @@ function AuthorizedPartnerships({ context, oscName, partnershipLabel, selectedId
   const [formOpen, setFormOpen] = useState(false)
   const compact = useMediaQuery(COMPACT_QUERY)
   const searchId = useId()
-  const registration = decidePartnershipRegistration(context)
+  const registration = decidePartnershipCreation(context)
 
   const items = useMemo(() => (state.status === 'ready' ? state.items : []), [state])
   const indexed = useMemo(() => items.map((p) => ({ p, text: searchableText(p) })), [items])
@@ -89,10 +152,7 @@ function AuthorizedPartnerships({ context, oscName, partnershipLabel, selectedId
       Cadastrar parceria
     </button>
   ) : (
-    <p className={registration.reason === 'commercial-suspension' ? ds.warning : ds.info} role="note">
-      <InfoIcon />
-      <span>{REGISTRATION_MESSAGE[registration.reason] ?? DENIAL_MESSAGE[registration.reason as keyof typeof DENIAL_MESSAGE]}</span>
-    </p>
+    registrationNotice(registration)
   )
 
   return (
@@ -126,7 +186,7 @@ function AuthorizedPartnerships({ context, oscName, partnershipLabel, selectedId
       </section>
 
       {registration.allowed && formOpen ? (
-        <PartnershipForm oscId={context.oscId} onCancel={() => setFormOpen(false)} onCreated={onCreated} />
+        <PartnershipForm oscId={context.oscId} oscName={oscName} onCancel={() => setFormOpen(false)} onCreated={onCreated} />
       ) : null}
 
       <section className={ds.cardFlush} aria-labelledby="osc02-lista" aria-busy={state.status === 'loading'}>
