@@ -1,3 +1,4 @@
+import type { FormalAct } from '../../domain/workPlanVersions.ts'
 import type { WorkPlanRegistrationStatus, WorkPlanValues } from '../../domain/workPlans.ts'
 import type { PartnershipErrorKind } from '../partnerships/types.ts'
 
@@ -6,7 +7,15 @@ import type { PartnershipErrorKind } from '../partnerships/types.ts'
  * `oscs/{oscId}/partnerships/{partnershipId}/workPlans/original`. Somente LEITURA pelo cliente.
  */
 export interface WorkPlan {
+  /** `original`, `v2`, `v3`… (DEV-02.3). */
   readonly id: string
+  /** Sequência FORMAL na cadeia de versões (1 = original); distinta da `revision` técnica. */
+  readonly sequence: number
+  readonly previousWorkPlanId: string | null
+  /** Ato formal declarado (somente versões posteriores). */
+  readonly formalAct: (FormalAct & { readonly declaredBy: string | null; readonly declaredAt: Date | null }) | null
+  /** Situação de ativação gravada (somente versões posteriores; ativação bloqueada nesta versão do sistema). */
+  readonly activationStatus: 'pending-decision' | 'active' | 'superseded' | null
   readonly oscId: string
   readonly partnershipId: string
   readonly registrationStatus: WorkPlanRegistrationStatus
@@ -28,4 +37,6 @@ export interface WorkPlanService {
   readonly available: boolean
   /** `null` = Plano ainda não estruturado no SIGOSC. */
   get(oscId: string, partnershipId: string): Promise<WorkPlanResult<WorkPlan | null>>
+  /** Todas as versões da parceria, em ordem de sequência (lista vazia = não estruturado). */
+  listVersions(oscId: string, partnershipId: string): Promise<WorkPlanResult<readonly WorkPlan[]>>
 }

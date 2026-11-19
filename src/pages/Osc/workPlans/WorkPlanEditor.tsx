@@ -1,11 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import ds from '../../../components/ds/ds.module.css'
-import { DENIAL_MESSAGE } from '../../../domain/authorization.ts'
+import { denialMessage } from '../../../domain/workPlanVersions.ts'
 import {
   FIELD_DEFINITIONS as FIELDS,
   GROUPS,
   MAX_BENEFICIARIES,
-  WORK_PLAN_MESSAGE,
   fieldErrorMessage,
   validateChanges,
   type FieldErrorCode,
@@ -85,7 +84,7 @@ export function WorkPlanEditor({ plan, initialForm, reloading = false, onDirtyCh
     setErrors({})
     inflight.current = true
     setSaving(true)
-    const result = await api.update({ oscId: plan.oscId, partnershipId: plan.partnershipId, requestId, expectedRevision: plan.revision, changes: changes as Partial<Record<WorkPlanField, FieldValue>> })
+    const result = await api.update({ oscId: plan.oscId, partnershipId: plan.partnershipId, workPlanId: plan.id, requestId, expectedRevision: plan.revision, changes: changes as Partial<Record<WorkPlanField, FieldValue>> })
     inflight.current = false
     setSaving(false)
     if (result.ok) {
@@ -103,7 +102,7 @@ export function WorkPlanEditor({ plan, initialForm, reloading = false, onDirtyCh
       result.error === 'network'
         ? 'Não foi possível comunicar com o servidor. Nenhuma alteração foi confirmada; os dados digitados foram mantidos.'
         : result.error === 'forbidden' && result.reason
-          ? (WORK_PLAN_MESSAGE[result.reason] ?? (result.reason in DENIAL_MESSAGE ? DENIAL_MESSAGE[result.reason as keyof typeof DENIAL_MESSAGE] : 'Alteração não autorizada.'))
+          ? denialMessage(result.reason, 'Alteração não autorizada.')
           : result.error === 'session-expired'
             ? 'Sua sessão expirou. Entre novamente para continuar.'
             : result.error === 'invalid-values'

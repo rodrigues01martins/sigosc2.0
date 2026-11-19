@@ -9,22 +9,35 @@ import {
   GROUPS,
   SITUATION_LABEL,
   VIEW_PERMISSION,
-  WORK_PLAN_MESSAGE,
-  checkFinalization,
   decideWorkPlanOperation,
-  type WorkPlanDecision,
   type WorkPlanSituation,
 } from '../../../domain/workPlans.ts'
 import { usePartnershipDependencies } from '../../../hooks/partnershipsContext.ts'
 import { useWorkPlanDependencies } from '../../../hooks/workPlansContext.ts'
 import type { Partnership, PartnershipErrorKind } from '../../../services/partnerships/types.ts'
 import type { WorkPlan } from '../../../services/workPlans/types.ts'
+import {
+  ACTIVATION_LABEL,
+  activationStatusOf,
+  checkVersionFinalization,
+  currentVersionId,
+  decideVersionCreation,
+  denialMessage,
+  formalActTypeLabel,
+  versionLabel,
+  type FormalActErrorCode,
+  type FormalActField,
+  type VersionDenial,
+} from '../../../domain/workPlanVersions.ts'
 import styles from '../partnerships/Partnerships.module.css'
-import { PARTNERSHIP_LOAD_ERROR, formatTerm, formatTimestamp } from '../partnerships/format.ts'
+import { PARTNERSHIP_LOAD_ERROR, formatDate, formatTerm, formatTimestamp, todayInBrasilia } from '../partnerships/format.ts'
 import { PartnershipStatus } from '../partnerships/PartnershipStatus.tsx'
 import { displayValue, type FormState } from './form.ts'
 import { CorrectionHistory } from './CorrectionHistory.tsx'
 import { WorkPlanCorrection } from './WorkPlanCorrection.tsx'
+import { FormalActForm } from './FormalActForm.tsx'
+import { VersionComparison } from './VersionComparison.tsx'
+import { VersionHistory } from './VersionHistory.tsx'
 import { WorkPlanEditor } from './WorkPlanEditor.tsx'
 
 interface Props {
@@ -41,11 +54,11 @@ type State =
   | { status: 'loading' }
   | { status: 'error'; error: PartnershipErrorKind }
   | { status: 'not-found' }
-  | { status: 'ready'; partnership: Partnership; plan: WorkPlan | null; planAllowed: boolean }
+  | { status: 'ready'; partnership: Partnership; versions: readonly WorkPlan[]; planAllowed: boolean }
 
-function denialText(decision: Extract<WorkPlanDecision, { allowed: false }>, missing: string): string {
+function denialText(decision: { allowed: false; reason: VersionDenial }, missing: string): string {
   if (decision.reason === 'permission-not-granted') return missing
-  return WORK_PLAN_MESSAGE[decision.reason] ?? (decision.reason in DENIAL_MESSAGE ? DENIAL_MESSAGE[decision.reason as keyof typeof DENIAL_MESSAGE] : '')
+  return denialMessage(decision.reason, '')
 }
 
 /**
@@ -92,7 +105,12 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const [busy, setBusy] = useState(false)
   const [correcting, setCorrecting] = useState(false)
   const [historyKey, setHistoryKey] = useState(0)
-  const requestIds = useRef({ start: globalThis.crypto.randomUUID(), finalize: globalThis.crypto.randomUUID() })
+  // DEV-02.3: versão exibida (null = padrão), registro de alteração formal e comparação.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [creatingVersion, setCreatingVersion] = useState(false)
+  const [editingAct, setEditingAct] = useState(false)
+  const [comparison, setComparison] = useState<{ before: string; after: string } | null>(null)
+  const requestIds = useRef({ start: globalThis.crypto.randomUUID(), finalize: globalThis.crypto.randomUUID(), version: globalThis.crypto.randomUUID() })
   const callbacks = useRef({ onResolved, onNotFound })
   useEffect(() => {
     callbacks.current = { onResolved, onNotFound }
@@ -111,11 +129,11 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
         return
       }
       callbacks.current.onResolved(p.data)
-      if (!planAllowed) return setState({ status: 'ready', partnership: p.data, plan: null, planAllowed: false })
-      const plan = await workPlans.service.get(context.oscId, partnershipId)
+      if (!planAllowed) return setState({ status: 'ready', partnership: p.data, versions: [], planAllowed: false })
+      const versions = await workPlans.service.listVersions(context.oscId, partnershipId)
       if (!alive) return
-      if (!plan.ok) return setState({ status: 'error', error: plan.error })
-      setState({ status: 'ready', partnership: p.data, plan: plan.data, planAllowed: true })
+      if (!versions.ok) return setState({ status: 'error', error: versions.error })
+      setState({ status: 'ready', partnership: p.data, versions: versions.data, planAllowed: true })
     })()
     return () => {
       alive = false
@@ -161,14 +179,28 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
     )
   }
 
-  const { partnership: p, plan } = state
+  const { partnership: p, versions } = state
+  // Critério de vigência (DEV-02.3): versão ativada de maior sequência; sem ativação (bloqueada), a original finalizada.
+  const currentId = currentVersionId(versions)
+  const pending = versions.find((v) => v.sequence > 1 && v.activationStatus === 'pending-decision' && v.registrationStatus === 'in-registration')
+  const defaultId = pending?.id ?? currentId ?? versions[0]?.id ?? null
+  const plan: WorkPlan | null = versions.find((v) => v.id === (selectedId ?? defaultId)) ?? versions[0] ?? null
+  const currentPlan = versions.find((v) => v.id === currentId) ?? null
+  const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions, currentId) : null
+  function selectVersion(id: string) {
+    setSelectedId(id)
+    setCorrecting(false)
+    setConfirming(false)
+    setEditingAct(false)
+    setCarry(null)
+  }
   const situation: WorkPlanSituation = plan ? plan.registrationStatus : 'not-structured'
   const start = decideWorkPlanOperation(context, 'start', p.administrativeStatus, situation)
   const edit = decideWorkPlanOperation(context, 'update', p.administrativeStatus, situation)
   const finalize = decideWorkPlanOperation(context, 'finalize', p.administrativeStatus, situation)
   const correction = decideWorkPlanOperation(context, 'correct', p.administrativeStatus, situation)
   const facts = { instrument: p.instrument, termStart: p.termStart, termEnd: p.termEnd, formalizationDate: p.formalizationDate, administrativeStatus: p.administrativeStatus, workPlanApprovalDeclared: p.workPlanApprovalDeclared }
-  const check = plan ? checkFinalization(plan.values, facts) : null
+  const check = plan ? checkVersionFinalization(plan.values, facts, plan.sequence > 1 ? plan.formalAct : null, todayInBrasilia()) : null
   const who = (uid: string | null) => (uid && uid === context.uid ? ' · por você' : '')
 
   async function startRegistration() {
@@ -188,7 +220,8 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   async function confirmFinalization() {
     if (busy || !plan) return
     setBusy(true)
-    const result = await workPlans.api.finalize({ oscId: context.oscId, partnershipId, requestId: requestIds.current.finalize, expectedRevision: plan.revision })
+    const result = await workPlans.api.finalize({ oscId: context.oscId, partnershipId, workPlanId: plan.id, requestId: requestIds.current.finalize, expectedRevision: plan.revision })
+    if (result.ok) requestIds.current.finalize = globalThis.crypto.randomUUID()
     setBusy(false)
     setConfirming(false)
     if (result.ok) {
@@ -289,9 +322,79 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
         </section>
       ) : (
         <>
+          <section className={ds.card} aria-labelledby="osc05-versao-exibida">
+            <div className={styles.listHeader} style={{ padding: 0 }}>
+              <h2 id="osc05-versao-exibida" className={ds.sectionTitle}>
+                {versionLabel(plan.sequence)}
+              </h2>
+              <span className={`${ds.badge} ${styles.situation}`}>{ACTIVATION_LABEL[activationStatusOf(plan, currentId)]}</span>
+            </div>
+            {plan.formalAct ? (
+              <dl className={styles.dl}>
+                <div>
+                  <dt>Ato formal</dt>
+                  <dd>
+                    {formalActTypeLabel(plan.formalAct.type, plan.formalAct.typeDescription)}
+                    {plan.formalAct.reference ? ` — ${plan.formalAct.reference}` : ''}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Data do ato</dt>
+                  <dd>{formatDate(plan.formalAct.actDate)}</dd>
+                </div>
+                <div>
+                  <dt>Produção de efeitos</dt>
+                  <dd>{plan.formalAct.effectiveDate ? formatDate(plan.formalAct.effectiveDate) : 'Não informada'}</dd>
+                </div>
+                <div>
+                  <dt>Versão anterior</dt>
+                  <dd>{plan.previousWorkPlanId === 'original' ? 'Versão original' : (plan.previousWorkPlanId ?? '—')}</dd>
+                </div>
+                <div className={styles.wide}>
+                  <dt>Descrição da alteração</dt>
+                  <dd>{plan.formalAct.description ?? 'Não informada'}</dd>
+                </div>
+              </dl>
+            ) : (
+              <p className={ds.muted}>Representação estruturada do Plano aprovado original (origem da cadeia de versões).</p>
+            )}
+            <p className={styles.hint}>
+              {plan.sequence > 1
+                ? 'Ato formal declarado pelo usuário; o SIGOSC não o valida juridicamente e o documento não está armazenado. A vigência desta versão depende de decisão administrativa ainda não homologada.'
+                : 'A finalização interna não representa aprovação jurídica.'}
+            </p>
+            {plan.sequence > 1 && plan.registrationStatus === 'in-registration' && edit.allowed && !editingAct ? (
+              <span className={styles.touch}>
+                <button type="button" className={ds.secondary} onClick={() => setEditingAct(true)}>
+                  Editar dados do ato formal
+                </button>
+              </span>
+            ) : null}
+          </section>
+
+          {editingAct && plan.formalAct ? (
+            <FormalActForm
+              mode="edit"
+              baseLabel={versionLabel(plan.sequence)}
+              initial={plan.formalAct}
+              onCancel={() => setEditingAct(false)}
+              onSubmit={async (act) => {
+                const result = await workPlans.api.updateFormalAct({ oscId: context.oscId, partnershipId, workPlanId: plan.id, requestId: globalThis.crypto.randomUUID(), expectedRevision: plan.revision, formalAct: act })
+                if (result.ok) {
+                  setEditingAct(false)
+                  setNotice({ kind: 'success', text: 'Dados do ato formal salvos e confirmados pelo servidor.' })
+                  refresh()
+                  return { ok: true }
+                }
+                if (result.error === 'stale') refresh()
+                return { ok: false, fields: result.fields as Partial<Record<FormalActField | 'formalAct', FormalActErrorCode>> | undefined, message: result.error === 'stale' ? 'A versão foi alterada por outra pessoa; os dados foram recarregados. Revise e salve novamente.' : result.error === 'network' ? 'Não foi possível comunicar com o servidor. Nada foi gravado; os dados foram mantidos.' : result.error === 'forbidden' && result.reason ? denialMessage(result.reason, 'Operação não autorizada.') : 'Revise os dados do ato formal. Nada foi gravado.' }
+              }}
+            />
+          ) : null}
+
           {plan.registrationStatus === 'in-registration' && edit.allowed ? (
             <WorkPlanEditor
-              key={`${plan.revision}:${carry?.key ?? 0}`}
+              key={`${plan.id}:${plan.revision}:${carry?.key ?? 0}`}
               plan={plan}
               initialForm={carry?.form}
               reloading={carry !== null && carry.staleRevision === plan.revision}
@@ -427,7 +530,65 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             )
           ) : null}
 
-          {plan.registrationStatus === 'finalized' ? <CorrectionHistory oscId={context.oscId} partnershipId={partnershipId} refreshKey={historyKey} /> : null}
+          {plan.registrationStatus === 'finalized' ? <CorrectionHistory oscId={context.oscId} partnershipId={partnershipId} workPlanId={plan.id} refreshKey={historyKey} /> : null}
+
+          {creatingVersion && currentPlan ? (
+            <FormalActForm
+              mode="create"
+              baseLabel={versionLabel(currentPlan.sequence).toLowerCase()}
+              onCancel={() => setCreatingVersion(false)}
+              onSubmit={async (act) => {
+                const result = await workPlans.api.createVersion({ oscId: context.oscId, partnershipId, requestId: requestIds.current.version, baseWorkPlanId: currentPlan.id, baseRevision: currentPlan.revision, formalAct: act })
+                if (result.ok) {
+                  requestIds.current.version = globalThis.crypto.randomUUID()
+                  setCreatingVersion(false)
+                  selectVersion(result.id)
+                  setNotice({ kind: 'success', text: `Nova versão criada a partir da ${versionLabel(currentPlan.sequence).toLowerCase()}, que permanece preservada. Ajuste os campos alterados e finalize.` })
+                  refresh()
+                  return { ok: true }
+                }
+                if (result.error === 'stale' || (result.error === 'forbidden' && (result.reason === 'pending-version-exists' || result.reason === 'base-not-current'))) refresh()
+                return {
+                  ok: false,
+                  fields: result.fields as Partial<Record<FormalActField | 'formalAct', FormalActErrorCode>> | undefined,
+                  message:
+                    result.error === 'stale'
+                      ? 'A versão vigente foi alterada desde a sua consulta; os dados foram recarregados. Confira e tente novamente.'
+                      : result.error === 'network'
+                        ? 'Não foi possível comunicar com o servidor. Nenhuma versão foi criada; os dados foram mantidos.'
+                        : result.error === 'forbidden' && result.reason
+                          ? denialMessage(result.reason, 'Operação não autorizada.')
+                          : 'Revise os dados do ato formal. Nenhuma versão foi criada.',
+                }
+              }}
+            />
+          ) : null}
+
+          <VersionHistory
+            versions={versions}
+            currentId={currentId}
+            selectedId={plan.id}
+            viewerUid={context.uid}
+            onSelect={selectVersion}
+            onCompare={(before, after) => setComparison({ before, after })}
+          />
+          {creation && !creatingVersion ? (
+            creation.allowed ? (
+              <span className={styles.touch}>
+                <button type="button" className={ds.primary} onClick={() => { setNotice(null); setCreatingVersion(true) }}>
+                  Registrar alteração formal
+                </button>
+              </span>
+            ) : creation.reason !== 'permission-not-granted' ? (
+              <p className={`${ds.info} ${styles.iconNote}`} role="note">
+                <InfoIcon />
+                <span>{denialMessage(creation.reason, '')}</span>
+              </p>
+            ) : null
+          ) : null}
+          {comparison ? (
+            <VersionComparison versions={versions} beforeId={comparison.before} afterId={comparison.after} onChange={(before, after) => setComparison({ before, after })} onClose={() => setComparison(null)} />
+          ) : null}
         </>
       )}
     </>

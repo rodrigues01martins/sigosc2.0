@@ -17,14 +17,14 @@ const DATE = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: '
  * Servido pelo SERVIDOR (a auditoria é ilegível pelo navegador) a quem tem `work-plan.view`
  * na OSC. Mostra apenas correções materiais — não os eventos técnicos de cadastro.
  */
-export function CorrectionHistory({ oscId, partnershipId, refreshKey }: { oscId: string; partnershipId: string; refreshKey: number }) {
+export function CorrectionHistory({ oscId, partnershipId, workPlanId, refreshKey }: { oscId: string; partnershipId: string; workPlanId: string; refreshKey: number }) {
   const { api } = useWorkPlanDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let alive = true
-    void api.history({ oscId, partnershipId }).then((result) => {
+    void api.history({ oscId, partnershipId, workPlanId }).then((result) => {
       if (!alive) return
       if (result.ok) setState({ status: 'ready', entries: result.entries })
       else
@@ -41,7 +41,7 @@ export function CorrectionHistory({ oscId, partnershipId, refreshKey }: { oscId:
     return () => {
       alive = false
     }
-  }, [api, oscId, partnershipId, refreshKey, attempt])
+  }, [api, oscId, partnershipId, workPlanId, refreshKey, attempt])
 
   return (
     <section className={ds.card} aria-labelledby="osc05-historico" aria-busy={state.status === 'loading'}>

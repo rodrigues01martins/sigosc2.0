@@ -445,3 +445,8 @@
   flex: 0 0 18px;
   margin-top: 2px;
 }
+
+/* DEV-02.3: detalhe legível sobre o fundo do item selecionado (contraste ≥ 4,5:1). */
+.card.selected .selectedDetail {
+  color: var(--ds-fg-default);
+}

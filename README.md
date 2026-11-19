@@ -845,7 +845,7 @@ oscs/{oscId}/workPlanEvents/{id}   action start|update|finalize, partnershipId, 
 Identificador fixo `original` sob a parceria: associação inequívoca, consulta por um único `get` e
 inícios simultâneos colidindo no mesmo documento (um só registro). Isolamento pelo caminho da OSC.
 
-### 11.4 Versionamento futuro (DEC-034/039) — preparado, não implementado
+### 11.4 Versionamento (DEC-034/039) — implementado na DEV-02.3 (ver 11.10)
 
 - O registro atual é a **origem** da cadeia (`origin.sequence = 1`, `sourceWorkPlanId = null`,
   `formalVersion = false`): **não** é apresentado como versão formal.
@@ -853,8 +853,8 @@ inícios simultâneos colidindo no mesmo documento (um só registro). Isolamento
   `sourceWorkPlanId = 'original'`, ato formal e data), sem alterar o anterior: o histórico é a lista da
   subcoleção; diferenças = comparação campo a campo de `values`.
 - Registros futuros (metas, execução, despesas) guardarão `workPlanId` de origem (DEC-039).
-- Neste incremento: nenhuma versão é criada; edição comum não gera versão; prorrogação não toca o Plano;
-  registro finalizado não é sobrescrito.
+- DEV-02.2: nenhuma versão criada. DEV-02.3: versões posteriores criadas por alteração formal (11.10);
+  edição comum e correção material continuam sem gerar versão; registro finalizado não é sobrescrito.
 
 ### 11.5 Permissões (catálogo) — DEC-PT-001 (alternativa B)
 
@@ -952,7 +952,7 @@ vinculação futura, sem dependência de arquivo inexistente.
 
 - Correção de erro material: **resolvida pela DEC-PT-002** (11.6-A).
 - Texto integral das decisões DEC-006/032–039 e Inventário FUN: não localizados; campos **T** a confirmar.
-- Metas, indicadores, fórmulas, planejamento financeiro, versões e alterações formais: incrementos futuros.
+- Metas, indicadores, fórmulas e planejamento financeiro: incrementos futuros. Versões e alterações formais: DEV-02.3 (11.10).
 - Armazenamento documental (Storage) e permissões do administrador pela Administração da Plataforma.
 
 ### 11.9 Validação no Preview (Firebase de testes)
@@ -967,6 +967,60 @@ vinculação futura, sem dependência de arquivo inexistente.
    conferir o histórico; no Console, `workPlans/original` e `workPlanEvents` (evento
    `correction_{uid}_{requestId}`). Os dados são reais no ambiente de testes (use conteúdo
    fictício); reversão: excluir o documento do Plano e os eventos.
+
+### 11.10 Versionamento do Plano aprovado (DEV-02.3)
+
+**Três operações distintas:** (A) edição comum de versão em cadastramento — não gera versão;
+(B) correção de erro material (DEC-PT-002) — não gera versão, identifica a versão corrigida;
+(C) **alteração formal** — cria nova versão integral (documento novo), com o ato formal registrado.
+
+**Modelo** (`oscs/{oscId}/partnerships/{pid}/workPlans/{id}`):
+
+| Campo | Original (`original`) | Versão posterior (`v2`, `v3`…) |
+| --- | --- | --- |
+| `origin.sequence` | 1 | n (sequência formal, distinta de `revision`) |
+| `origin.previousWorkPlanId` | — | versão-base (vínculo da cadeia) |
+| `origin.baseRevision` | — | revisão da base copiada |
+| `formalAct` | — | `type` (termo-aditivo, apostilamento, outro-ato), `typeDescription`, `reference`, `actDate`, `effectiveDate`, `description`, `declaredBy`, `declaredAt`, `automatedVerification: false` |
+| `activation.status` | — | `pending-decision` (ativação bloqueada) |
+| `values` | dados do Plano | **cópia integral** da base, depois editável até a finalização |
+| `revision` | revisão técnica (concorrência) | idem, reinicia em 1 |
+
+Documento do ato: **não armazenado** (sem upload). Eventos em `workPlanEvents`: `version-created`,
+`formal-act-update`, `update`, `finalize`, `material-correction` — todos com `workPlanId`.
+
+**Regras de criação (servidor, transação):** `work-plan.edit`; OSC sem suspensão comercial; parceria não
+arquivada (suspensão administrativa não bloqueia); base = versão **vigente** e **finalizada**; `baseRevision`
+igual à atual (senão 409 `stale`); ato válido (tipo e data obrigatórios — H, HF-G05; data não futura);
+**no máximo uma versão posterior pendente** (409 `pending-version-exists`). Id determinístico `v{n}` +
+`tx.create` → criações simultâneas geram uma só versão; repetição com o mesmo `requestId` devolve a mesma.
+
+**Finalização da nova versão:** mesma operação da DEV-02.2 (`work-plan.edit`, confirmação explícita, autor e
+data, sem significado jurídico), exigindo também o ato válido. Após finalizar, sem edição comum. A
+finalização **não** torna a versão vigente.
+
+**Critério de vigência efetivamente usado:** versão com `activation.status = active` de maior sequência;
+na ausência (situação atual), **a original finalizada**. Nunca há duas vigentes.
+
+**Ativação — preparada, mas bloqueada:** `POST {action:'activate'}` responde 403 `vigency-rule-pending`
+para todos. Decisão administrativa necessária (proposta **DEC-PT-003**): quando uma versão posterior passa a
+vigorar (finalização do registro? data de efeitos do ato? confirmação explícita?) e quem a confirma.
+
+**Interface (PAG-OSC05):** cabeçalho da versão exibida com situação de vigência e dados do ato; "Versões do
+Plano de Trabalho" (lista cronológica: sequência, cadastro, ato, data, autoria; "Consultar" e "Comparar com a
+anterior"); "Registrar alteração formal" (somente quando autorizado); "Editar dados do ato formal" (versão em
+cadastramento); comparação estruturada (alterado, incluído, passou a não informado, passou/deixou de ser não
+aplicável, diferença só de formatação; zero ≠ não informado; metas/indicadores/financeiro fora). Sem
+edição, exclusão ou restauração de versões históricas.
+
+**Validação no Preview (Firebase de testes):**
+1. Não há mudança em `firestore.rules` nem índices (leitura de versões já coberta por `work-plan.view`).
+2. Implantar a função `/api/osc-work-plans` atualizada (mesmas variáveis da 8.7).
+3. Com um Plano **finalizado** e um usuário com "Registrar, finalizar e corrigir o Plano de Trabalho":
+   "Registrar alteração formal" → tipo, data do ato (e referência/descrição) → "Criar nova versão".
+4. Conferir `workPlans/v2` (cópia integral, `activation.status = pending-decision`) e `original` inalterado.
+5. Editar um campo da Versão 2, salvar, finalizar; conferir que a original continua "Vigente no SIGOSC".
+6. "Comparar com a anterior" e "Consultar" a versão original. Reversão: excluir `v2` e seus eventos.
 
 ## 12. Publicação na Vercel
 
@@ -999,7 +1053,9 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Permissões individuais, delegação, suspensão comercial (DEV-01.3) | Implementado e testado em emuladores; **operações de servidor não configuradas** no Preview |
 | Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
 | Plano de Trabalho: cadastro estruturado, consulta, finalização interna e correção de erro material (DEV-02.2 e C01) | Implementado; validado em emuladores; **não validado no Preview** |
-| Versões do Plano, metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
+| Versões do Plano: alteração formal, histórico, comparação, correção por versão (DEV-02.3) | Implementado; validado em emuladores; **não validado no Preview** |
+| Ativação de nova versão como vigente | **Preparada, mas bloqueada** (aguarda decisão administrativa DEC-PT-003) |
+| Metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

@@ -1,11 +1,10 @@
 import { useId, useRef, useState, type FormEvent } from 'react'
 import ds from '../../../components/ds/ds.module.css'
-import { DENIAL_MESSAGE } from '../../../domain/authorization.ts'
+import { denialMessage } from '../../../domain/workPlanVersions.ts'
 import {
   CORRECTION_DECLARATION,
   FIELD_DEFINITIONS as FIELDS,
   JUSTIFICATION_LIMITS,
-  WORK_PLAN_MESSAGE,
   correctionErrorMessage,
   validateCorrection,
   type CorrectionErrorCode,
@@ -106,7 +105,7 @@ export function WorkPlanCorrection({ plan, partnership, onCancel, onCorrected, o
     inflight.current = true
     setSaving(true)
     const changes = Object.fromEntries(review.items.map((item) => [item.field, item.after]))
-    const result = await api.correct({ oscId: plan.oscId, partnershipId: plan.partnershipId, requestId, expectedRevision: plan.revision, changes, justification: review.justification, declaration: true })
+    const result = await api.correct({ oscId: plan.oscId, partnershipId: plan.partnershipId, workPlanId: plan.id, requestId, expectedRevision: plan.revision, changes, justification: review.justification, declaration: true })
     inflight.current = false
     setSaving(false)
     if (result.ok) {
@@ -123,7 +122,7 @@ export function WorkPlanCorrection({ plan, partnership, onCancel, onCorrected, o
       setErrors(result.fields as Errors)
       setFailure('Revise os itens indicados. Nenhuma correção foi gravada.')
     } else if (result.error === 'forbidden' && result.reason) {
-      setFailure(WORK_PLAN_MESSAGE[result.reason] ?? (result.reason in DENIAL_MESSAGE ? DENIAL_MESSAGE[result.reason as keyof typeof DENIAL_MESSAGE] : 'Correção não autorizada.'))
+      setFailure(denialMessage(result.reason, 'Correção não autorizada.'))
     } else if (result.error === 'network') {
       setFailure('Não foi possível comunicar com o servidor. Nenhuma correção foi confirmada; os dados informados foram mantidos.')
     } else if (result.error === 'session-expired') {

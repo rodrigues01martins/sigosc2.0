@@ -266,7 +266,8 @@ test('A12 — fluxo de autenticação não executa operações no Firestore ou S
     /\b(getDoc|getDocs|setDoc|addDoc|updateDoc|deleteDoc|onSnapshot|collection|runTransaction|writeBatch|uploadBytes|uploadBytesResumable|uploadString|getDownloadURL|getBytes|deleteObject|listAll|getMetadata|updateMetadata)\s*\(/
   // DEV-02.1: o adaptador de LEITURA de parcerias usa `collection()` apenas para montar a consulta;
   // a ausência de escritas nele é verificada em `organizations.test.ts` e `partnershipService.test.ts`.
-  for (const file of sourceFiles().filter((f) => !/services\/partnerships\/sdk\.ts$/.test(f))) {
+  // DEV-02.3: idem para o adaptador de LEITURA do Plano (lista de versões).
+  for (const file of sourceFiles().filter((f) => !/services\/(partnerships|workPlans)\/sdk\.ts$/.test(f))) {
     assert.doesNotMatch(code(file), dataOps, relative(SRC_ROOT, file))
   }
 })

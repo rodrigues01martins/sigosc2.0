@@ -378,3 +378,101 @@ describe('Restrições, contexto e responsividade', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Nenhuma alteração a salvar.')
   })
 })
+
+describe('Versionamento do Plano (DEV-02.3)', () => {
+  const ORIGINAL = { oscId: ALFA, partnershipId: RUNNING, values: { ...REQUIRED, targetAudience: informed('Crianças') }, status: 'finalized' as const, revision: 3 }
+  const versionsList = () => screen.getByRole('list', { name: 'Versões em ordem cronológica' })
+
+  it('DEV-02.3-T01 — original identificada como vigente; histórico cronológico sem editar, excluir ou restaurar', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL] })
+    await screen.findByRole('heading', { name: 'Versões do Plano de Trabalho' })
+    const items = within(versionsList()).getAllByRole('listitem')
+    expect(items).toHaveLength(1)
+    expect(items[0]?.textContent).toMatch(/Versão original.*sequência 1.*Vigente no SIGOSC/)
+    expect(screen.queryByRole('button', { name: /Excluir|Restaurar|Ativar/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Registrar alteração formal' })).toBeTruthy()
+  })
+
+  it('DEV-02.3-T02/T03/T04/T06/T07 — registra alteração formal: ato validado, nova versão integral; original preservada', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Registrar alteração formal' }))
+    await screen.findByRole('heading', { name: 'Registrar alteração formal do Plano' })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar nova versão' }))
+    expect((await screen.findByText('Revise os dados do ato formal. Nada foi gravado.')).getAttribute('role')).toBe('alert')
+    expect(workPlans.calls.filter((c) => c.kind === 'create-version')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('radio', { name: 'Termo aditivo' }))
+    fill(/Número ou referência administrativa/, '1º Termo Aditivo')
+    fill(/Data do ato ou de sua aprovação/, '2026-09-01')
+    fireEvent.click(screen.getByRole('button', { name: 'Criar nova versão' }))
+    expect(await screen.findByText(/Nova versão criada a partir da versão original, que permanece preservada/)).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Versão 2' })).toBeTruthy()
+    expect(workPlans.calls.find((c) => c.kind === 'create-version')?.request).toMatchObject({ baseWorkPlanId: 'original', baseRevision: 3, formalAct: { type: 'termo-aditivo', actDate: '2026-09-01' } })
+    const items = within(versionsList()).getAllByRole('listitem')
+    expect(items).toHaveLength(2)
+    expect(items[0]?.textContent).toMatch(/Versão original.*Vigente no SIGOSC/)
+    expect(items[1]?.textContent).toMatch(/Versão 2.*Vigência não definida: aguarda decisão administrativa.*Em cadastramento/)
+    // Cópia integral editável; a original continua finalizada e preservada.
+    expect((screen.getByRole('textbox', { name: /^Público atendido/ }) as HTMLTextAreaElement).value).toBe('Crianças')
+    expect(workPlans.docs.get(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/original`)).toMatchObject({ registrationStatus: 'finalized', revision: 3 })
+    // Só uma versão pendente: nova alteração formal indisponível, com o motivo.
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+    expect(screen.getByText(/Já existe uma versão posterior registrada cuja vigência aguarda decisão administrativa/)).toBeTruthy()
+  })
+
+  it('DEV-02.3-T05/T09 — editar a nova versão não altera a original; dados do ato editáveis em cadastramento', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...ORIGINAL, status: 'in-registration', sequence: 2, revision: 1 }] })
+    expect(await screen.findByRole('heading', { name: 'Versão 2' })).toBeTruthy()
+    // T08: ato gravado (com autoria do servidor) válido → requisitos de finalização atendidos.
+    expect(screen.getByText('Os requisitos para a finalização estão atendidos.')).toBeTruthy()
+    fireEvent.change(screen.getByRole('textbox', { name: /^Público atendido/ }), { target: { value: 'Crianças e adolescentes' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar alterações' }))
+    await screen.findByText('Alterações salvas e confirmadas pelo servidor.')
+    expect(workPlans.calls.find((c) => c.kind === 'update')?.request).toMatchObject({ workPlanId: 'v2' })
+    expect((workPlans.docs.get(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/original`)?.values as Record<string, unknown>).targetAudience).toEqual(informed('Crianças'))
+    fireEvent.click(screen.getByRole('button', { name: 'Editar dados do ato formal' }))
+    fill(/Número ou referência administrativa/, '1º TA retificado')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar dados do ato' }))
+    await screen.findByText('Dados do ato formal salvos e confirmados pelo servidor.')
+    expect(workPlans.calls.find((c) => c.kind === 'update-act')?.request).toMatchObject({ workPlanId: 'v2', formalAct: { reference: '1º TA retificado' } })
+  })
+
+  it('DEV-02.3-T10/T11/T12/T13 — consulta de versão anterior e comparação estruturada', async () => {
+    openPlan({
+      prepare: withPermissions(['partnerships.view', 'work-plan.view']),
+      workPlans: [ORIGINAL, { ...ORIGINAL, sequence: 2, revision: 2, values: { ...REQUIRED, targetAudience: informed('Crianças e adolescentes'), executionMethod: informed('Oficinas') } }],
+    })
+    // Versão posterior finalizada sem ativação: a original continua sendo exibida como vigente.
+    expect(await screen.findByRole('heading', { name: 'Versão original' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão 2' }))
+    expect(await screen.findByRole('heading', { name: 'Versão 2' })).toBeTruthy()
+    expect(screen.getByText('Crianças e adolescentes')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
+    expect(await screen.findByRole('heading', { name: 'Versão original' })).toBeTruthy()
+    expect(screen.getByText('Crianças')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Comparar com a anterior: Versão 2' }))
+    const table = await screen.findByRole('table', { name: 'Diferenças entre Versão original e Versão 2' })
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent)
+    expect(rows).toHaveLength(2)
+    expect(rows.some((t) => /Público atendido.*Crianças.*Crianças e adolescentes.*Alterado/.test(t ?? ''))).toBe(true)
+    expect(rows.some((t) => /Incluído/.test(t ?? ''))).toBe(true)
+    expect(screen.getByText(/2 campos com diferença; 8 mantidos/)).toBeTruthy()
+    expect(screen.getByText(/Metas, indicadores e planejamento financeiro ainda não são estruturados/)).toBeTruthy()
+    // T22 (consulta): só view — sem registrar alteração formal.
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar comparação' }))
+    expect(screen.queryByRole('table', { name: /Diferenças entre/ })).toBeNull()
+  })
+
+  it('DEV-02.3-T20 / bloqueio seguro — arquivada: sem nova versão; versão finalizada não oferece ativação', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...ORIGINAL, partnershipId: 'pAlfaCooperacao01xx' }] }, 'pAlfaCooperacao01xx')
+    await screen.findByRole('heading', { name: 'Versões do Plano de Trabalho' })
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+    cleanup()
+    openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...ORIGINAL, sequence: 2, revision: 2 }] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Consultar: Versão 2' }))
+    await screen.findByRole('heading', { name: 'Versão 2' })
+    expect(screen.getAllByText('Vigência não definida: aguarda decisão administrativa').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /Ativar|Tornar vigente/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+  })
+})

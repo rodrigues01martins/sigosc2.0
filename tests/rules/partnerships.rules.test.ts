@@ -133,6 +133,24 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(delegate.doc(alfaPlan).get())
   })
 
+  test('DEV-02.3 (regra) — versões posteriores: leitura com work-plan.view na própria OSC; nenhuma escrita direta', async () => {
+    const v2 = `oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/v2`
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const db = admin.firestore()
+      await db.doc(v2).set({ ...workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1' }), id: 'v2', activation: { status: 'pending-decision' } })
+      await db.doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit'] })
+    })
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(v2).get())
+    const list = await assertSucceeds(delegate.collection(`oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans`).get())
+    assert.equal(list.size, 1)
+    await assertFails(as(operator).doc(v2).get()) // sem work-plan.view
+    await assertFails(delegate.doc(v2).update({ activation: { status: 'active' } }))
+    await assertFails(delegate.doc(`oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/v3`).set({ id: 'v3' }))
+    await assertFails(delegate.doc(v2).delete())
+    await assertFails(as(USERS.SINGLE.uid).doc(v2).get()) // outra OSC
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())
