@@ -8,7 +8,11 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
  * da parceria é SEMPRE consultado sob a OSC ativa (as Security Rules decidem).
  */
 export const OSC_ROUTES = ['identificacao', 'parcerias', 'usuarios'] as const
-export type OscRoute = (typeof OSC_ROUTES)[number] | 'parceria' | 'plano'
+export type OscRoute = (typeof OSC_ROUTES)[number] | 'parceria' | 'plano' | 'indicadores'
+
+/** Rotas subordinadas a uma parceria (`#/parcerias/{id}[/plano|/indicadores]`). */
+export const PARTNERSHIP_ROUTES = ['parceria', 'plano', 'indicadores'] as const
+export const isPartnershipRoute = (r: OscRoute): r is (typeof PARTNERSHIP_ROUTES)[number] => (PARTNERSHIP_ROUTES as readonly string[]).includes(r)
 
 export interface OscLocation {
   readonly route: OscRoute
@@ -21,8 +25,8 @@ function readHash(): string {
 }
 
 export function parseLocation(hash: string): OscLocation {
-  // DEV-02.2: `#/parcerias/{id}/plano` — Plano de Trabalho da parceria (PAG-OSC05).
-  const plan = /^parcerias\/([^/]+)\/plano$/.exec(hash)
+  // DEV-02.2: `#/parcerias/{id}/plano` — Plano de Trabalho (PAG-OSC05); DEV-02.4: `/indicadores` (PAG-OSC08).
+  const plan = /^parcerias\/([^/]+)\/(plano|indicadores)$/.exec(hash)
   if (plan) {
     let id: string
     try {
@@ -30,7 +34,7 @@ export function parseLocation(hash: string): OscLocation {
     } catch {
       id = ''
     }
-    return { route: 'plano', partnershipId: id }
+    return { route: plan[2] as 'plano' | 'indicadores', partnershipId: id }
   }
   const detail = /^parcerias\/([^/]+)$/.exec(hash)
   if (detail) {
@@ -56,9 +60,9 @@ export function useOscRoute(): [OscLocation, (route: OscRoute, partnershipId?: s
   const location = useMemo(() => parseLocation(hash), [hash])
   const navigate = useCallback((next: OscRoute, partnershipId?: string) => {
     const target =
-      (next === 'parceria' || next === 'plano') && partnershipId
-        ? `parcerias/${encodeURIComponent(partnershipId)}${next === 'plano' ? '/plano' : ''}`
-        : next === 'parceria' || next === 'plano'
+      isPartnershipRoute(next) && partnershipId
+        ? `parcerias/${encodeURIComponent(partnershipId)}${next === 'parceria' ? '' : `/${next}`}`
+        : isPartnershipRoute(next)
           ? 'parcerias'
           : next
     if (readHash() !== target || globalThis.location.hash === '') globalThis.location.hash = `/${target}`

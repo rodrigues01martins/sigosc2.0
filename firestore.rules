@@ -21,6 +21,8 @@ rules_version = '2';
 //   Auditoria (workPlanEvents) ilegível; nenhuma escrita pelo cliente.
 // DEV-02.2-C01: SEM novas exceções. Correções materiais (DEC-PT-002) são gravadas e o histórico é
 //   consultado somente pelo servidor (/api/osc-work-plans), que exige 'work-plan.view'/'work-plan.edit'.
+// DEV-02.4: LEITURA de .../workPlans/{workPlanId}/goals/{id} e /indicators/{id} com 'work-plan.view';
+//   nenhuma escrita pelo cliente (gravação somente por /api/osc-work-plan-components).
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo
@@ -103,6 +105,15 @@ service cloud.firestore {
         // (competência própria). Gravações exclusivamente pelo servidor (/api/osc-work-plans).
         match /workPlans/{workPlanId} {
           allow get, list: if canConsult(oscId, 'work-plan.view');
+
+          // DEV-02.4 — metas e indicadores PREVISTOS da versão: somente LEITURA, mesma competência.
+          // Gravações exclusivamente pelo servidor (/api/osc-work-plan-components).
+          match /goals/{goalId} {
+            allow get, list: if canConsult(oscId, 'work-plan.view');
+          }
+          match /indicators/{indicatorId} {
+            allow get, list: if canConsult(oscId, 'work-plan.view');
+          }
         }
       }
     }

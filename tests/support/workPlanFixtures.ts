@@ -15,6 +15,69 @@ export interface WorkPlanFixture {
   /** `activation.status` gravado (padrão: em cadastramento → awaiting-finalization; finalizada → active). */
   activation?: string | null
   createdBy?: string
+  /** DEV-02.4: metas e indicadores PREVISTOS desta versão (dados fictícios). */
+  goals?: readonly ComponentFixture[]
+  indicators?: readonly ComponentFixture[]
+}
+
+export interface ComponentFixture {
+  id: string
+  data: Record<string, unknown>
+  revision?: number
+  inheritedFrom?: string | null
+}
+
+/** Meta fictícia completa e válida (sobrescrevível). */
+export const goalData = (code: string, extra: Record<string, unknown> = {}) => ({
+  code,
+  description: `Descrição fictícia da ${code}.`,
+  nature: 'quantitative',
+  unit: { state: 'informed', value: 'participantes' },
+  expectedQuantity: { state: 'informed', value: 200 },
+  expectedResult: { state: 'not-informed' },
+  completionCriterion: { state: 'not-informed' },
+  referencePeriod: { state: 'not-informed' },
+  status: 'active',
+  order: 0,
+  ...extra,
+})
+
+/** Indicador fictício completo e válido (sobrescrevível). */
+export const indicatorData = (code: string, goalIds: string[] = [], extra: Record<string, unknown> = {}) => ({
+  code,
+  name: `Indicador fictício ${code}`,
+  description: { state: 'not-informed' },
+  nature: 'quantitative',
+  measurementType: 'percentage',
+  unit: { state: 'informed', value: '%' },
+  periodicity: { state: 'informed', value: { kind: 'monthly', description: null } },
+  target: { state: 'informed', value: 80 },
+  expectedParameter: { state: 'not-informed' },
+  rule: { method: 'ratio', description: '(concluintes ÷ inscritos) × 100', numerator: 'concluintes', denominator: 'inscritos', multiplier: 100 },
+  categories: [],
+  classificationCriterion: { state: 'not-informed' },
+  verificationSource: { state: 'not-informed' },
+  goalIds,
+  status: 'active',
+  order: 0,
+  ...extra,
+})
+
+export function componentDocument(kind: 'goal' | 'indicator', c: ComponentFixture, p: { oscId: string; partnershipId: string; workPlanId: string }) {
+  return {
+    id: c.id,
+    kind,
+    oscId: p.oscId,
+    partnershipId: p.partnershipId,
+    workPlanId: p.workPlanId,
+    data: c.data,
+    revision: c.revision ?? 1,
+    inheritedFrom: c.inheritedFrom ? { workPlanId: c.inheritedFrom, revision: 1 } : null,
+    createdAt: CREATED,
+    createdBy: 'uid-ficticio-operator',
+    updatedAt: CREATED,
+    updatedBy: 'uid-ficticio-operator',
+  }
 }
 
 export function workPlanDocument(p: WorkPlanFixture) {

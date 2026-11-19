@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { memberDocument, memberPath, OSCS, USERS } from '../../../../tests/support/organizationFixtures.ts'
 import { PERMISSION_USERS } from '../../../../tests/support/permissionFixtures.ts'
 import { renderOscApp, type RenderOptions } from '../../../../tests/support/renderOscApp.tsx'
+import { goalData, indicatorData } from '../../../../tests/support/workPlanFixtures.ts'
 
 afterEach(() => {
   cleanup()
@@ -454,7 +455,7 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
     expect(rows.some((t) => /Público atendido.*Crianças.*Crianças e adolescentes.*Alterado/.test(t ?? ''))).toBe(true)
     expect(rows.some((t) => /Incluído/.test(t ?? ''))).toBe(true)
     expect(screen.getByText(/2 campos com diferença; 8 mantidos/)).toBeTruthy()
-    expect(screen.getByText(/Metas, indicadores e planejamento financeiro ainda não são estruturados/)).toBeTruthy()
+    expect(screen.getByText(/Planejamento financeiro ainda não é estruturado e não faz parte da comparação/)).toBeTruthy()
     // T22 (consulta): só view — sem registrar alteração formal.
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Fechar comparação' }))
@@ -533,5 +534,144 @@ describe('Ativação e vigência cadastral (DEV-02.3-C01)', () => {
     expect(within(versionsList()).getAllByRole('listitem')[1]?.textContent).toMatch(/Finalizada sem ativação: aguarda regularização/)
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
     expect(screen.getByText(/Nova alteração formal fica bloqueada até a regularização administrativa/)).toBeTruthy()
+  })
+})
+
+describe('Metas e indicadores previstos (DEV-02.4)', () => {
+  const G1 = 'g_000000000000000000a1'
+  const I1 = 'i_000000000000000000b1'
+  const DRAFT = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }
+  const WITH = {
+    ...DRAFT,
+    goals: [{ id: G1, data: goalData('Meta 01', { expectedQuantity: { state: 'informed', value: 0 } }) }],
+    indicators: [{ id: I1, data: indicatorData('IND-01', [G1], { periodicity: { state: 'informed', value: { kind: 'quarterly', description: null } } }) }],
+  }
+  const section = () => screen.getByRole('region', { name: 'Metas e indicadores previstos' })
+
+  it('DEV-02.4-T01/T08 — consulta da versão: metas, indicadores vinculados, resultado previsto e zero informado', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...WITH, status: 'finalized' }] })
+    await screen.findByText('1 meta · 1 indicador')
+    const text = section().textContent ?? ''
+    expect(text).toMatch(/Meta 01.*Quantidade prevista0 participantes/)
+    expect(text).toMatch(/IND-01 · Indicador fictício IND-01.*Resultado previsto80 %.*PeriodicidadeTrimestral.*Metas vinculadasMeta 01/)
+    expect(text).toMatch(/\(concluintes ÷ inscritos\) × 100 — numerador: concluintes; denominador: inscritos; multiplicador: 100/)
+    expect(within(section()).getAllByText('Não informado').length).toBeGreaterThan(0)
+    expect(within(section()).queryByRole('button')).toBeNull() // só consulta
+    expect(screen.queryByRole('button', { name: /Registrar apuração|Registrar avaliação|ajuste manual/i })).toBeNull() // T25
+  })
+
+  it('DEV-02.4-T02/T03/T04/T05/T09 — cadastrar meta e indicador vinculado pela interface, com validação local', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [DRAFT] })
+    await screen.findByText(/Nenhuma meta ou indicador registrado nesta versão. Registre-os/)
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar meta' }))
+    expect((screen.getByLabelText(/Código da meta/) as HTMLInputElement).value).toBe('Meta 01') // sugerido
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar meta' })).getByRole('button', { name: 'Adicionar meta' }))
+    expect((await screen.findByText('Revise os campos indicados. Nada foi gravado.')).getAttribute('role')).toBe('alert')
+    expect(workPlans.calls.filter((c) => c.kind === 'create-component')).toHaveLength(0) // T05
+    fill(/Descrição da meta/, 'Atender 1.200 participantes')
+    fireEvent.click(screen.getByRole('radio', { name: 'Quantitativa' }))
+    fill(/Quantidade prevista/, '1.200')
+    fill(/Unidade de medida/, 'participantes')
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar meta' })).getByRole('button', { name: 'Adicionar meta' }))
+    await screen.findByText('Meta Meta 01 registrada e confirmada pelo servidor.')
+    expect(workPlans.calls.find((c) => c.kind === 'create-component')?.request).toMatchObject({ workPlanId: 'original', kind: 'goal', data: { code: 'Meta 01', expectedQuantity: { state: 'informed', value: 1200 }, nature: 'quantitative' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar indicador à meta Meta 01' }))
+    const form = screen.getByRole('region', { name: 'Adicionar indicador' })
+    expect((within(form).getByRole('checkbox', { name: 'Meta 01' }) as HTMLInputElement).checked).toBe(true) // vínculo já marcado
+    fill(/Nome do indicador/, 'Taxa de conclusão')
+    fireEvent.click(within(form).getByRole('radio', { name: 'Quantitativa' }))
+    fireEvent.change(within(form).getByLabelText(/Tipo de resultado numérico/), { target: { value: 'rate' } })
+    fireEvent.change(within(form).getByLabelText(/Resultado previsto \(valor-alvo\)/), { target: { value: '0' } })
+    fireEvent.change(within(form).getByLabelText(/Periodicidade do indicador/), { target: { value: 'semiannual' } })
+    fireEvent.change(within(form).getByLabelText(/Fórmula, como consta do Plano/), { target: { value: 'concluintes por mil inscritos' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar indicador' }))
+    await screen.findByText('Indicador IND-01 registrado e confirmado pelo servidor.')
+    const created = workPlans.calls.filter((c) => c.kind === 'create-component')[1]?.request as { data: Record<string, unknown> }
+    expect(created.data).toMatchObject({ code: 'IND-01', measurementType: 'rate', target: { state: 'informed', value: 0 }, periodicity: { state: 'informed', value: { kind: 'semiannual' } } })
+    expect((created.data.goalIds as string[]).length).toBe(1)
+    await screen.findByText('1 meta · 1 indicador')
+    expect(screen.getByRole('list', { name: 'Indicadores da meta Meta 01' }).textContent).toMatch(/IND-01 · Taxa de conclusão/)
+  })
+
+  it('DEV-02.4-T06 — indicador qualitativo: sem valor numérico; categorias transcritas', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [WITH] })
+    await screen.findByText('1 meta · 1 indicador')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Adicionar indicador' }).at(-1) as HTMLElement)
+    const form = screen.getByRole('region', { name: 'Adicionar indicador' })
+    fill(/Nome do indicador/, 'Satisfação das famílias')
+    fireEvent.click(within(form).getByRole('radio', { name: 'Qualitativa' }))
+    expect(within(form).queryByLabelText(/Resultado previsto \(valor-alvo\)/)).toBeNull()
+    fireEvent.change(within(form).getByLabelText(/Regra ou critério qualitativo/), { target: { value: 'Escuta qualificada semestral' } })
+    fireEvent.change(within(form).getByLabelText(/Categorias de classificação/), { target: { value: 'Atendido\nNão atendido' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar indicador' }))
+    await screen.findByText('Indicador IND-02 registrado e confirmado pelo servidor.')
+    const sent = workPlans.calls.find((c) => c.kind === 'create-component')?.request as { data: Record<string, unknown> }
+    expect(sent.data).toMatchObject({ nature: 'qualitative', measurementType: null, target: { state: 'not-informed' }, categories: ['Atendido', 'Não atendido'], goalIds: [] })
+  })
+
+  it('DEV-02.4-T14 — conflito de revisão recarrega; edição exibe o componente atual', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [WITH] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar meta Meta 01' }))
+    workPlans.respondWith((call) => (call.kind === 'update-component' ? { ok: false, error: 'stale' } : undefined))
+    fill(/Descrição da meta/, 'Nova descrição')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar meta' }))
+    expect(await screen.findByText(/alterado por outra pessoa; os dados foram recarregados/)).toBeTruthy()
+  })
+
+  it('Bloqueio seguro — Plano finalizado sem componentes: transcrição complementar aguarda decisão; sem botões', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, status: 'finalized' }] })
+    expect(await screen.findByText(/A transcrição complementar em Plano finalizado depende de decisão administrativa/)).toBeTruthy()
+    expect(within(section()).queryByRole('button', { name: /Adicionar/ })).toBeNull()
+  })
+
+  it('DEV-02.4-T16 — somente consulta sem work-plan.edit', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [WITH] })
+    await screen.findByText('1 meta · 1 indicador')
+    expect(within(section()).queryByRole('button')).toBeNull()
+    expect(within(section()).getByText(/não possui autorização para alterá-los/)).toBeTruthy()
+  })
+
+  it('DEV-02.4-T21/T24 — componentes por versão e comparação entre versões', async () => {
+    const changed = { id: G1, data: goalData('Meta 01', { expectedQuantity: { state: 'informed', value: 250 } }), inheritedFrom: 'original' }
+    openPlan({
+      prepare: withPermissions(['partnerships.view', 'work-plan.view']),
+      workPlans: [
+        { ...WITH, status: 'finalized', activation: 'superseded' },
+        { ...WITH, sequence: 2, status: 'finalized', revision: 2, goals: [changed, { id: 'g_000000000000000000a2', data: goalData('Meta 02') }], indicators: [{ id: I1, data: indicatorData('IND-01', [G1], { status: 'discontinued', periodicity: { state: 'informed', value: { kind: 'quarterly', description: null } } }) }] },
+      ],
+    })
+    await screen.findByText('2 metas · 0 indicadores')
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
+    await screen.findByText('1 meta · 1 indicador') // versão anterior preservada
+    fireEvent.click(screen.getByRole('button', { name: 'Comparar com a anterior: Versão 2' }))
+    const table = await screen.findByRole('table', { name: /Metas e indicadores: diferenças entre Versão original e Versão 2/ })
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent)
+    expect(rows).toEqual(['Meta Meta 01AlteradoQuantidade prevista', 'Meta Meta 02Incluído—', 'Indicador IND-01Descontinuado—'])
+  })
+})
+
+describe('Monitoramento e Avaliação — PAG-OSC08 (DEV-02.4)', () => {
+  const G1 = 'g_000000000000000000a1'
+  const plan = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED, status: 'finalized' as const, goals: [{ id: G1, data: goalData('Meta 01') }], indicators: [{ id: 'i_000000000000000000b1', data: indicatorData('IND-01', [G1]) }, { id: 'i_000000000000000000b2', data: indicatorData('IND-02', [], { nature: 'qualitative', measurementType: null, target: { state: 'not-informed' }, unit: { state: 'not-informed' }, expectedParameter: { state: 'informed', value: 'Famílias satisfeitas' }, rule: { method: 'described', description: 'Escuta' }, periodicity: { state: 'not-informed' } }) }] }
+
+  it('Indicadores previstos da versão vigente, sem apuração nem botões de avaliação', async () => {
+    window.location.hash = `#/parcerias/${RUNNING}/indicadores`
+    renderOscApp(OP, { prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [plan] })
+    const table = await screen.findByRole('table', { name: /Indicadores previstos na versão original/ })
+    expect(title()).toBe('Monitoramento e Avaliação')
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent)
+    expect(rows[0]).toMatch(/IND-01Indicador fictício IND-01Quantitativa · PercentualMeta 01Mensal80 %/)
+    expect(rows[1]).toMatch(/IND-02.*QualitativaSem meta vinculadaNão informadaFamílias satisfeitas/)
+    expect(screen.getByText(/nenhum resultado realizado é exibido/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Registrar apuração|Registrar avaliação|ajuste manual|evidência/i })).toBeNull()
+    expect(within(nav()).getByRole('button', { name: 'Monitoramento e Avaliação' }).getAttribute('aria-current')).toBe('page')
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir o Plano de Trabalho' }))
+    await waitFor(() => expect(window.location.hash).toBe(`#/parcerias/${RUNNING}/plano`))
+  })
+
+  it('Sem versão vigente: orientação, sem indicadores', async () => {
+    window.location.hash = `#/parcerias/${RUNNING}/indicadores`
+    renderOscApp(OP, { prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...plan, status: 'in-registration' }] })
+    expect(await screen.findByText(/Não há indicadores: o Plano de Trabalho aprovado ainda não foi registrado e finalizado/)).toBeTruthy()
   })
 })

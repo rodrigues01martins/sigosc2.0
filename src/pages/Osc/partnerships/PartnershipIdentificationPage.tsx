@@ -31,6 +31,8 @@ interface Props {
   onBack(): void
   /** DEV-02.2: acesso direto ao Plano de Trabalho da parceria (PAG-OSC05). */
   onOpenWorkPlan?(): void
+  /** DEV-02.4: PAG-OSC08 (indicadores previstos). */
+  onOpenIndicators?(): void
 }
 
 type State =
@@ -74,7 +76,7 @@ export function PartnershipIdentificationPage(props: Props) {
   return <Identification {...props} />
 }
 
-function Identification({ context, oscName, partnershipId, partnershipLabel, onResolved, onNotFound, onBack, onOpenWorkPlan }: Props) {
+function Identification({ context, oscName, partnershipId, partnershipLabel, onResolved, onNotFound, onBack, onOpenWorkPlan, onOpenIndicators }: Props) {
   const { service } = usePartnershipDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
@@ -173,10 +175,15 @@ function Identification({ context, oscName, partnershipId, partnershipLabel, onR
         </p>
       ) : null}
       {onOpenWorkPlan ? (
-        <nav aria-label="Páginas da parceria" className={styles.touch}>
+        <nav aria-label="Páginas da parceria" className={`${styles.actions} ${styles.touch}`}>
           <button type="button" className={ds.secondary} onClick={onOpenWorkPlan}>
             Plano de Trabalho
           </button>
+          {onOpenIndicators ? (
+            <button type="button" className={ds.secondary} onClick={onOpenIndicators}>
+              Monitoramento e Avaliação
+            </button>
+          ) : null}
         </nav>
       ) : null}
       {saved ? (

@@ -39,6 +39,7 @@ import { WorkPlanCorrection } from './WorkPlanCorrection.tsx'
 import { FormalActForm } from './FormalActForm.tsx'
 import { VersionComparison } from './VersionComparison.tsx'
 import { VersionHistory } from './VersionHistory.tsx'
+import { PlanComponents } from './PlanComponents.tsx'
 import { WorkPlanEditor } from './WorkPlanEditor.tsx'
 import { VIGENCY_BADGE, vigencyNotice } from './vigency.ts'
 
@@ -67,8 +68,8 @@ function denialText(decision: { allowed: false; reason: VersionDenial }, missing
  * PAG-OSC05 — Plano de Trabalho (DEV-02.2). Cadastro ESTRUTURADO do Plano aprovado da parceria
  * selecionada: situação do cadastro (não estruturado, em cadastramento, finalizado internamente),
  * dados autoritativos da parceria (não duplicados), edição por seções e finalização interna.
- * Abas "Versões" e "Alterações (Formalizadas)", metas, indicadores e planejamento financeiro do
- * HF-G05 NÃO foram implementados (sem botões inoperantes).
+ * DEV-02.3: versões e alterações formais. DEV-02.4: metas e indicadores PREVISTOS por versão.
+ * Planejamento financeiro do HF-G05 ainda NÃO implementado (sem botões inoperantes).
  */
 export function WorkPlanPage(props: Props) {
   const consult = evaluate(props.context, { kind: 'consult', permission: CONSULT_PERMISSION })
@@ -445,20 +446,21 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             </p>
           ) : null}
 
-          <section className={ds.card} aria-labelledby="osc05-componentes">
-            <h2 id="osc05-componentes" className={ds.sectionTitle}>
-              Metas, indicadores e planejamento financeiro
+          <PlanComponents
+            key={plan.id}
+            context={context}
+            partnershipId={partnershipId}
+            plan={plan}
+            canEdit={plan.registrationStatus === 'in-registration' && edit.allowed}
+            editDenial={edit.allowed ? null : denialText(edit, 'Você pode consultar as metas e os indicadores, mas não possui autorização para alterá-los.')}
+            onNotice={setNotice}
+          />
+
+          <section className={ds.card} aria-labelledby="osc05-financeiro">
+            <h2 id="osc05-financeiro" className={ds.sectionTitle}>
+              Planejamento financeiro
             </h2>
-            <dl className={styles.dl}>
-              <div>
-                <dt>Metas e indicadores</dt>
-                <dd>Estruturação em incremento futuro (configuráveis por parceria). Nada foi registrado.</dd>
-              </div>
-              <div>
-                <dt>Planejamento financeiro</dt>
-                <dd>{hasFinancialTransfer(p.instrument) ? 'Estruturação em incremento futuro. Nenhum valor foi registrado.' : 'Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros.'}</dd>
-              </div>
-            </dl>
+            <p className={ds.muted}>{hasFinancialTransfer(p.instrument) ? 'Estruturação em incremento futuro. Nenhum valor foi registrado.' : 'Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros.'}</p>
           </section>
 
           {plan.registrationStatus === 'in-registration' && check ? (
@@ -614,7 +616,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             ) : null
           ) : null}
           {comparison ? (
-            <VersionComparison versions={versions} beforeId={comparison.before} afterId={comparison.after} onChange={(before, after) => setComparison({ before, after })} onClose={() => setComparison(null)} />
+            <VersionComparison oscId={context.oscId} partnershipId={partnershipId} versions={versions} beforeId={comparison.before} afterId={comparison.after} onChange={(before, after) => setComparison({ before, after })} onClose={() => setComparison(null)} />
           ) : null}
         </>
       )}

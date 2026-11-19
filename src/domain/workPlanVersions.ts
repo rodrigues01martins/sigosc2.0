@@ -312,7 +312,15 @@ export function applicableVersionOn(versions: readonly VersionTimelineEntry[], d
 // Autorização das operações de versionamento
 // ---------------------------------------------------------------------------
 
-export type VersionDenial = WorkPlanDenial | 'base-not-current' | 'base-not-finalized' | 'pending-version-exists' | 'legacy-version-pending' | 'versions-inconsistent'
+export type VersionDenial =
+  | WorkPlanDenial
+  | 'base-not-current'
+  | 'base-not-finalized'
+  | 'pending-version-exists'
+  | 'legacy-version-pending'
+  | 'versions-inconsistent'
+  /** DEV-02.4: metas/indicadores em versão FINALIZADA sem componentes — aguarda decisão administrativa. */
+  | 'complementary-transcription-pending'
 export type VersionDecision = WorkPlanDecision | { readonly allowed: false; readonly reason: VersionDenial }
 
 /**
@@ -360,6 +368,8 @@ export const VERSION_MESSAGE: Partial<Record<VersionDenial, string>> = {
   'legacy-version-pending':
     'Há versão finalizada antes da regra de ativação (DEC-PT-003) que não foi ativada. Nova alteração formal fica bloqueada até a regularização administrativa.',
   'versions-inconsistent': 'Não foi possível identificar com segurança a versão vigente. Nenhuma alteração foi feita; procure o suporte.',
+  'complementary-transcription-pending':
+    'Esta versão já foi finalizada sem metas e indicadores estruturados. A transcrição complementar em Plano finalizado depende de decisão administrativa; nenhuma alteração foi feita.',
 }
 
 /** Finalização de versão posterior: requisitos do Plano + ato formal válido (H: tipo e data). */

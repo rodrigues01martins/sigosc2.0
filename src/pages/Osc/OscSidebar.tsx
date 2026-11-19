@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { RecordIcon, LayersIcon, UsersIcon } from '../../components/ds/icons.tsx'
-import type { OscRoute } from '../../hooks/useOscRoute.ts'
+import { isPartnershipRoute, type OscRoute } from '../../hooks/useOscRoute.ts'
 import type { Membership } from '../../services/organizations/types.ts'
 import styles from '../../layouts/OscShell.module.css'
 import { PAGE_META } from './oscLabels.ts'
@@ -88,6 +88,7 @@ const LABEL: Record<OscRoute, string> = {
   parcerias: PAGE_META.parcerias.title,
   parceria: 'Identificação da parceria',
   plano: 'Plano de Trabalho',
+  indicadores: 'Monitoramento e Avaliação',
   usuarios: 'Usuários e permissões',
 }
 
@@ -99,7 +100,9 @@ export function OscNavigation({ route, canManagePermissions, selectedPartnership
   const items: { route: OscRoute; icon: ReactNode }[] = [
     { route: 'identificacao', icon: <RecordIcon /> },
     { route: 'parcerias', icon: <LayersIcon /> },
-    ...(selectedPartnershipId ? [{ route: 'parceria' as const, icon: <RecordIcon /> }, { route: 'plano' as const, icon: <LayersIcon /> }] : []),
+    ...(selectedPartnershipId
+      ? [{ route: 'parceria' as const, icon: <RecordIcon /> }, { route: 'plano' as const, icon: <LayersIcon /> }, { route: 'indicadores' as const, icon: <RecordIcon /> }]
+      : []),
     ...(canManagePermissions ? [{ route: 'usuarios' as const, icon: <UsersIcon /> }] : []),
   ]
   return (
@@ -110,7 +113,7 @@ export function OscNavigation({ route, canManagePermissions, selectedPartnership
             type="button"
             className={styles.navItem}
             aria-current={route === item.route ? 'page' : undefined}
-            onClick={() => onNavigate(item.route, item.route === 'parceria' || item.route === 'plano' ? (selectedPartnershipId ?? undefined) : undefined)}
+            onClick={() => onNavigate(item.route, isPartnershipRoute(item.route) ? (selectedPartnershipId ?? undefined) : undefined)}
           >
             {item.icon}
             <span>{LABEL[item.route]}</span>

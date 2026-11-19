@@ -4,7 +4,7 @@ import ds from '../../components/ds/ds.module.css'
 import { APP_INFO } from '../../config/app.ts'
 import { useAuthActions, useAuthState } from '../../hooks/useAuth.ts'
 import { authorizationContextFor, decide } from '../../hooks/useAuthorization.ts'
-import { useOscRoute } from '../../hooks/useOscRoute.ts'
+import { isPartnershipRoute, useOscRoute } from '../../hooks/useOscRoute.ts'
 import { useActiveMembership, useOrganizationActions, useOrganizationState } from '../../hooks/useOrganization.ts'
 import shellStyles from '../../layouts/OscShell.module.css'
 import { OscShell } from '../../layouts/OscShell.tsx'
@@ -17,6 +17,7 @@ import { OscNavigation, OscSelector } from './OscSidebar.tsx'
 import { NoMembershipState, NoSelectableState, SelectOscPrompt, SuspensionBlocked, SuspensionReadOnly } from './OscStates.tsx'
 import { PartnershipIdentificationPage } from './partnerships/PartnershipIdentificationPage.tsx'
 import { PartnershipsPage } from './partnerships/PartnershipsPage.tsx'
+import { IndicatorsPage } from './workPlans/IndicatorsPage.tsx'
 import { WorkPlanPage } from './workPlans/WorkPlanPage.tsx'
 import { UsersPermissionsPage } from './UsersPermissionsPage.tsx'
 
@@ -105,7 +106,7 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
           onSelect={(oscId) => {
             // Troca de OSC: a parceria anterior é descartada e a navegação volta à lista (MT-3).
             setSelection(null)
-            if (route === 'parceria' || route === 'plano') navigate('parcerias')
+            if (isPartnershipRoute(route)) navigate('parcerias')
             void select(oscId)
           }}
         />
@@ -161,6 +162,7 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
                 onNotFound={() => setSelection((current) => (current?.id === location.partnershipId ? null : current))}
                 onBack={() => navigate('parcerias')}
                 onOpenWorkPlan={() => navigate('plano', location.partnershipId ?? '')}
+                onOpenIndicators={() => navigate('indicadores', location.partnershipId ?? '')}
               />
             ) : route === 'plano' ? (
               <WorkPlanPage
@@ -176,6 +178,22 @@ export function OscWorkspace({ environmentLabel }: { environmentLabel: string })
                 }}
                 onNotFound={() => setSelection((current) => (current?.id === location.partnershipId ? null : current))}
                 onBack={() => navigate('parcerias')}
+              />
+            ) : route === 'indicadores' ? (
+              <IndicatorsPage
+                key={location.partnershipId ?? ''}
+                context={context}
+                oscName={active.organization.name}
+                partnershipId={location.partnershipId ?? ''}
+                partnershipLabel={partnershipLabel}
+                onResolved={(p) => {
+                  if (selected?.id !== p.id || selected.status !== administrativeStatusLabel(p.administrativeStatus)) {
+                    setSelection({ oscId: active.oscId, id: p.id, title: partnershipTitle(p), status: administrativeStatusLabel(p.administrativeStatus) })
+                  }
+                }}
+                onNotFound={() => setSelection((current) => (current?.id === location.partnershipId ? null : current))}
+                onBack={() => navigate('parcerias')}
+                onOpenPlan={() => navigate('plano', location.partnershipId ?? '')}
               />
             ) : route === 'usuarios' ? (
               canManage ? (

@@ -58,6 +58,7 @@ import {
   type WorkPlanValues,
 } from '../../src/domain/workPlans.ts'
 import { MAX_BODY_BYTES } from './limits.ts'
+import { copyComponents, readComponentsForCopy } from './workPlanComponentsCopy.ts'
 import { serverToday } from './partnershipsService.ts'
 import { membershipFacts, organizationFacts, type ApiRequest, type ApiResponse, type ServerDeps } from './permissionsService.ts'
 
@@ -134,11 +135,11 @@ function parse(method: string | undefined, rawBody: string): Parsed | null {
   return null
 }
 
-function bearerToken(header: string | undefined): string | null {
+export function bearerToken(header: string | undefined): string | null {
   return /^Bearer ([A-Za-z0-9._-]+)$/.exec(header ?? '')?.[1] ?? null
 }
 
-function authErrorCode(error: unknown): 'session-expired' | 'invalid-token' {
+export function authErrorCode(error: unknown): 'session-expired' | 'invalid-token' {
   const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : ''
   return /id-token-(expired|revoked)|user-disabled|user-not-found/.test(code) ? 'session-expired' : 'invalid-token'
 }
@@ -153,7 +154,7 @@ class Outcome extends Error {
 const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'not-finalized', 'base-not-current', 'base-not-finalized', 'pending-version-exists', 'legacy-version-pending', 'versions-inconsistent']
 const deny = (reason: VersionDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 
-function partnershipFacts(snap: DocumentSnapshot | undefined, oscId: string): PartnershipFacts | null {
+export function partnershipFacts(snap: DocumentSnapshot | undefined, oscId: string): PartnershipFacts | null {
   const d = snap?.exists ? snap.data() : undefined
   if (!d || d.oscId !== oscId || !isInstrument(d.instrument) || !isAdministrativeStatus(d.administrativeStatus)) return null
   if (!isValidDate(d.termStart) || !isValidDate(d.termEnd) || !isValidDate(d.formalizationDate)) return null
@@ -264,6 +265,8 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         if (!act.ok) throw new Outcome(json(422, { error: 'invalid-formal-act', fields: act.errors }))
         const sequence = Math.max(...versions.map((v) => v.sequence)) + 1
         const id = versionIdFor(sequence)
+        // DEV-02.4: metas e indicadores da base integram a nova versão (leitura antes das escritas).
+        const components = await readComponentsForCopy(tx, planRef)
         tx.create(plans.doc(id), {
           schemaVersion: 1,
           id,
@@ -285,7 +288,8 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
           updatedAt: now,
           updatedBy: uid,
         })
-        tx.create(events.doc(), { action: 'version-created', oscId, partnershipId, workPlanId: id, previousWorkPlanId: request.baseWorkPlanId, baseRevision: request.baseRevision, sequence, actType: act.act.type, actorUid: uid, actorAuthority: decision.authority, at: now })
+        const copied = copyComponents(tx, components, plans.doc(id), { oscId, partnershipId, workPlanId: id, baseWorkPlanId: request.baseWorkPlanId, uid, now })
+        tx.create(events.doc(), { action: 'version-created', oscId, partnershipId, workPlanId: id, previousWorkPlanId: request.baseWorkPlanId, baseRevision: request.baseRevision, sequence, actType: act.act.type, copiedComponents: copied, actorUid: uid, actorAuthority: decision.authority, at: now })
         return json(201, { ok: true, created: true, workPlan: { id, revision: 1, registrationStatus: 'in-registration', sequence } })
       }
 

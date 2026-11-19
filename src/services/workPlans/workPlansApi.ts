@@ -2,6 +2,7 @@
  * Cliente de `/api/osc-work-plans` (DEV-02.2): iniciar, alterar e finalizar o cadastro estruturado.
  * O cliente não decide autorização; falhas de infraestrutura nunca viram sucesso simulado.
  */
+import type { ComponentErrorCode, ComponentKind, GoalData, IndicatorData } from '../../domain/workPlanComponents.ts'
 import type { FormalAct, FormalActErrorCode, FormalActField, VersionDenial } from '../../domain/workPlanVersions.ts'
 import type { CorrectionErrorCode, CorrectionErrorKey, FieldErrorCode, FieldValue, WorkPlanDenial, WorkPlanField } from '../../domain/workPlans.ts'
 
@@ -17,6 +18,7 @@ export type WorkPlansApiError =
   | 'finalization-pending'
   | 'invalid-correction'
   | 'invalid-formal-act'
+  | 'invalid-component'
   | 'invalid-request'
   | 'unknown'
 
@@ -24,7 +26,7 @@ export type WorkPlansFailure = {
   readonly ok: false
   readonly error: WorkPlansApiError
   readonly reason?: WorkPlanDenial | VersionDenial
-  readonly fields?: Partial<Record<CorrectionErrorKey | FormalActField | 'formalAct', FieldErrorCode | CorrectionErrorCode | FormalActErrorCode | 'required'>>
+  readonly fields?: Partial<Record<CorrectionErrorKey | FormalActField | 'formalAct' | string, FieldErrorCode | CorrectionErrorCode | FormalActErrorCode | ComponentErrorCode | 'required'>>
   readonly pending?: readonly string[]
 }
 /** DEC-PT-003: ativação cadastral confirmada pelo servidor na finalização de versão posterior. */
@@ -37,6 +39,9 @@ export interface ActivationOutcome {
 export type WorkPlansResult =
   | { readonly ok: true; readonly id: string; readonly revision: number; readonly changed: boolean; readonly warnings: readonly string[]; readonly activation?: ActivationOutcome | null }
   | WorkPlansFailure
+
+/** DEV-02.4: resultado de gravação de meta ou indicador (estado confirmado pelo servidor). */
+export type ComponentResult = { readonly ok: true; readonly id: string; readonly revision: number; readonly changed: boolean } | WorkPlansFailure
 
 /** Entrada do histórico de correções materiais (DEC-PT-002), já autorizada pelo servidor. */
 export interface CorrectionEntry {
@@ -72,16 +77,21 @@ export interface WorkPlansApi {
     declaration: boolean
   }): Promise<WorkPlansResult>
   history(request: { oscId: string; partnershipId: string; workPlanId?: string }): Promise<HistoryResult>
+  /** DEV-02.4: cadastrar meta ou indicador PREVISTO numa versão em cadastramento. */
+  createComponent(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: ComponentKind; data: GoalData | IndicatorData }): Promise<ComponentResult>
+  /** DEV-02.4: alterar meta ou indicador (componente completo; revisão conferida). */
+  updateComponent(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: ComponentKind; componentId: string; expectedRevision: number; data: GoalData | IndicatorData }): Promise<ComponentResult>
 }
 
 interface Dependencies {
   fetch: typeof globalThis.fetch
   getIdToken(): Promise<string | null>
   endpoint?: string
+  componentsEndpoint?: string
 }
 
-export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-work-plans' }: Dependencies): WorkPlansApi {
-  async function request(method: 'POST' | 'PATCH' | 'GET', payload: unknown, query = ''): Promise<{ ok: true; body: Record<string, unknown> } | WorkPlansFailure> {
+export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-work-plans', componentsEndpoint = '/api/osc-work-plan-components' }: Dependencies): WorkPlansApi {
+  async function request(method: 'POST' | 'PATCH' | 'GET', payload: unknown, query = '', target = endpoint): Promise<{ ok: true; body: Record<string, unknown> } | WorkPlansFailure> {
     let token: string | null
     try {
       token = await getIdToken()
@@ -91,7 +101,7 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     if (!token) return { ok: false, error: 'session-expired' }
     let response: Response
     try {
-      response = await fetch(`${endpoint}${query}`, {
+      response = await fetch(`${target}${query}`, {
         method,
         headers: method === 'GET' ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: method === 'GET' ? undefined : JSON.stringify(payload),
@@ -127,7 +137,9 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
             ? { ok: false, error: 'invalid-correction', fields: (body.fields ?? {}) as WorkPlansFailure['fields'], pending: (body.pending ?? undefined) as string[] | undefined }
             : body.error === 'invalid-formal-act'
               ? { ok: false, error: 'invalid-formal-act', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
-              : { ok: false, error: 'invalid-values', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
+              : body.error === 'invalid-component'
+                ? { ok: false, error: 'invalid-component', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
+                : { ok: false, error: 'invalid-values', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
       case 400:
         return { ok: false, error: 'invalid-request' }
       case 503:
@@ -150,6 +162,14 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     return { ok: true, id: plan.id, revision: plan.revision, changed, warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [], activation }
   }
 
+  async function component(method: 'POST' | 'PATCH', payload: unknown): Promise<ComponentResult> {
+    const result = await request(method, payload, '', componentsEndpoint)
+    if (!result.ok) return result
+    const c = result.body.component as Record<string, unknown> | undefined
+    if (typeof c?.id !== 'string' || typeof c.revision !== 'number') return { ok: false, error: 'unknown' }
+    return { ok: true, id: c.id, revision: c.revision, changed: result.body.created === true || result.body.changed === true }
+  }
+
   return {
     start: ({ oscId, partnershipId, requestId }) => call('POST', { oscId, partnershipId, requestId, action: 'start' }),
     update: (request) => call('PATCH', request),
@@ -157,6 +177,10 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     createVersion: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, requestId: r.requestId, action: 'create-version', baseWorkPlanId: r.baseWorkPlanId, baseRevision: r.baseRevision, formalAct: r.formalAct }),
     updateFormalAct: (r) => call('PATCH', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, expectedRevision: r.expectedRevision, formalAct: r.formalAct }),
     correct: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'correct', expectedRevision: r.expectedRevision, changes: r.changes, justification: r.justification, declaration: r.declaration }),
+    createComponent: (r) =>
+      component('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: r.kind === 'goal' ? 'create-goal' : 'create-indicator', data: r.data }),
+    updateComponent: (r) =>
+      component('PATCH', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, componentKind: r.kind, componentId: r.componentId, expectedRevision: r.expectedRevision, data: r.data }),
     async history({ oscId, partnershipId, workPlanId }) {
       const result = await request('GET', null, `?${new URLSearchParams({ oscId, partnershipId, ...(workPlanId ? { workPlanId } : {}) }).toString()}`)
       if (!result.ok) return result

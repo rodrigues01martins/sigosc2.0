@@ -4,17 +4,18 @@
  * servidor confirmaria (com as validações de domínio), para exercitar a interface.
  */
 import { checkActivationChain, checkVersionFinalization, decideVersionCreation, parseStoredActivation, validateFormalAct, versionIdFor, type VersionSummary } from '../../src/domain/workPlanVersions.ts'
+import { isDuplicateCode, linkIntegrity, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
 import { emptyValues, validateCorrection, type FieldValue, type WorkPlanField, type WorkPlanValues } from '../../src/domain/workPlans.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import type { WorkPlansSdk } from '../../src/services/workPlans/workPlanService.ts'
-import type { CorrectionEntry, HistoryResult, WorkPlansApi, WorkPlansResult } from '../../src/services/workPlans/workPlansApi.ts'
-import { workPlanDocument, workPlanPath, type WorkPlanFixture } from './workPlanFixtures.ts'
+import type { ComponentResult, CorrectionEntry, HistoryResult, WorkPlansApi, WorkPlansResult } from '../../src/services/workPlans/workPlansApi.ts'
+import { componentDocument, workPlanDocument, workPlanPath, type WorkPlanFixture } from './workPlanFixtures.ts'
 
 export interface FakeWorkPlansDb {
   readonly kind: 'fake-work-plans'
 }
 
-type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act'
+type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act' | 'create-component' | 'update-component'
 type Call = { kind: Kind; request: Record<string, unknown> }
 
 const TODAY = '2026-11-17'
@@ -30,10 +31,19 @@ const ALLOWED = {
 export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
   const db: FakeWorkPlansDb = { kind: 'fake-work-plans' }
   const docs = new Map<string, Record<string, unknown>>()
-  for (const p of initial) docs.set(workPlanPath(p.oscId, p.partnershipId, (p.sequence ?? 1) === 1 ? 'original' : `v${p.sequence}`), workPlanDocument(p))
+  for (const p of initial) {
+    const workPlanId = (p.sequence ?? 1) === 1 ? 'original' : `v${p.sequence}`
+    const path = workPlanPath(p.oscId, p.partnershipId, workPlanId)
+    docs.set(path, workPlanDocument(p))
+    for (const g of p.goals ?? []) docs.set(`${path}/goals/${g.id}`, componentDocument('goal', g, { ...p, workPlanId }))
+    for (const i of p.indicators ?? []) docs.set(`${path}/indicators/${i.id}`, componentDocument('indicator', i, { ...p, workPlanId }))
+  }
+  let componentCounter = 0
+  const componentsOf = (planPath: string, collection: 'goals' | 'indicators') =>
+    [...docs.entries()].filter(([p]) => p.startsWith(`${planPath}/${collection}/`)).map(([p, d]) => ({ path: p, id: p.slice(planPath.length + collection.length + 2), doc: d }))
   const reads: string[] = []
   const calls: Call[] = []
-  const failures = new Map<'get', unknown>()
+  const failures = new Map<'get' | 'components', unknown>()
   const history = new Map<string, CorrectionEntry[]>()
 
   const prefix = (oscId: string, partnershipId: string) => `oscs/${oscId}/partnerships/${partnershipId}/workPlans/`
@@ -62,6 +72,13 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       if (failures.has('get')) throw failures.get('get')
       return versionsOf(oscId, partnershipId).map(([path, data]) => ({ path, data: structuredClone(data) }))
     },
+    async listComponents(_db, oscId, partnershipId, workPlanId) {
+      reads.push(`${oscId}/${partnershipId}/${workPlanId}/components`)
+      if (failures.has('components')) throw failures.get('components')
+      const planPath = workPlanPath(oscId, partnershipId, workPlanId)
+      const raw = (c: 'goals' | 'indicators') => componentsOf(planPath, c).map(({ path, doc }) => ({ path, data: structuredClone(doc) }))
+      return { goals: raw('goals'), indicators: raw('indicators') }
+    },
   }
 
   let override: ((call: Call) => WorkPlansResult | HistoryResult | Promise<WorkPlansResult | HistoryResult> | undefined) | null = null
@@ -72,6 +89,39 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
     return (await override?.(call)) as WorkPlansResult | undefined
   }
   const valuesOf = (doc: Record<string, unknown>) => ({ ...emptyValues(), ...(doc.values as object) }) as WorkPlanValues
+
+  /** Meta/indicador como o servidor confirmaria (validação do domínio; sem autorização). */
+  async function component(kind: 'create-component' | 'update-component', request: Parameters<WorkPlansApi['createComponent']>[0] & { componentId?: string; expectedRevision?: number }, componentId: string | null): Promise<ComponentResult> {
+    const call: Call = { kind, request: request as unknown as Record<string, unknown> }
+    calls.push(call)
+    const custom = (await override?.(call)) as ComponentResult | undefined
+    if (custom) return custom
+    const planPath = workPlanPath(request.oscId, request.partnershipId, request.workPlanId)
+    const plan = docs.get(planPath)
+    if (!plan) return { ok: false, error: 'not-found' }
+    const goalsNow = componentsOf(planPath, 'goals')
+    const indicatorsNow = componentsOf(planPath, 'indicators')
+    if (plan.registrationStatus === 'finalized') return { ok: false, error: 'forbidden', reason: goalsNow.length + indicatorsNow.length === 0 ? 'complementary-transcription-pending' : 'already-finalized' }
+    const known = new Set(goalsNow.map((g) => g.id))
+    const v = request.kind === 'goal' ? validateGoal(request.data) : validateIndicator(request.data, known)
+    if (!v.ok) return { ok: false, error: 'invalid-component', fields: v.errors }
+    const collection = request.kind === 'goal' ? 'goals' : 'indicators'
+    const id = componentId ?? `${request.kind === 'goal' ? 'g' : 'i'}_${String(++componentCounter).padStart(20, '0')}`
+    const path = `${planPath}/${collection}/${id}`
+    const existing = docs.get(path)
+    if (componentId && !existing) return { ok: false, error: 'not-found' }
+    if (existing && existing.revision !== request.expectedRevision) return { ok: false, error: 'stale' }
+    const peers = (request.kind === 'goal' ? goalsNow : indicatorsNow).map((c) => ({ id: c.id, code: (c.doc.data as { code: string }).code }))
+    if (isDuplicateCode(v.data.code, peers, id)) return { ok: false, error: 'invalid-component', fields: { code: 'duplicate-code' } }
+    const asStored = <T,>(list: { id: string; doc: Record<string, unknown> }[], k: 'goal' | 'indicator') => list.map((c) => ({ id: c.id, kind: k, data: c.doc.data as T, revision: 1 }) as Stored<T>)
+    const goals = asStored<GoalData>(goalsNow, 'goal').filter((g) => g.id !== id)
+    const indicators = asStored<IndicatorData>(indicatorsNow, 'indicator').filter((i) => i.id !== id)
+    const integrity = request.kind === 'goal' ? linkIntegrity([...goals, { id, kind: 'goal', data: v.data as GoalData, revision: 1 }], asStored<IndicatorData>(indicatorsNow, 'indicator')) : linkIntegrity(goals.concat(asStored<GoalData>(goalsNow, 'goal').filter((g) => g.id === id)), [...indicators, { id, kind: 'indicator', data: v.data as IndicatorData, revision: 1 }])
+    if (!integrity.ok) return { ok: false, error: 'invalid-component', fields: request.kind === 'goal' ? { status: 'linked-indicators' } : { goalIds: 'discontinued-goal' } }
+    const revision = existing ? (existing.revision as number) + 1 : 1
+    docs.set(path, { ...(existing ?? {}), id, kind: request.kind, oscId: request.oscId, partnershipId: request.partnershipId, workPlanId: request.workPlanId, data: v.data, revision, inheritedFrom: existing?.inheritedFrom ?? null })
+    return { ok: true, id, revision, changed: true }
+  }
 
   const api: WorkPlansApi = {
     async start(request) {
@@ -142,10 +192,15 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       if (!act.ok) return { ok: false, error: 'invalid-formal-act', fields: act.errors }
       const sequence = Math.max(...summaries.map((s) => s.sequence)) + 1
       const id = versionIdFor(sequence)
-      docs.set(workPlanPath(request.oscId, request.partnershipId, id), {
+      const target = workPlanPath(request.oscId, request.partnershipId, id)
+      docs.set(target, {
         ...workPlanDocument({ oscId: request.oscId, partnershipId: request.partnershipId, sequence, formalAct: { ...act.act, declaredBy: 'simulado' }, values: valuesOf(base), createdBy: 'simulado' }),
         createdAt: new Date(),
       })
+      // Cópia integral dos componentes (mesmos IDs lógicos), como o servidor.
+      const basePath = workPlanPath(request.oscId, request.partnershipId, request.baseWorkPlanId)
+      for (const c of ['goals', 'indicators'] as const)
+        for (const { id: cid, doc } of componentsOf(basePath, c)) docs.set(`${target}/${c}/${cid}`, { ...structuredClone(doc), workPlanId: id, revision: 1, inheritedFrom: { workPlanId: request.baseWorkPlanId, revision: doc.revision } })
       return ok(id, 1)
     },
     async correct(request) {
@@ -165,6 +220,12 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       list.push({ workPlanId: request.workPlanId, at: new Date('2026-11-17T15:00:00Z').toISOString(), actor: 'you', actorAuthority: 'member', corrections: validation.items, justification: validation.justification, fromRevision: revision - 1, toRevision: revision })
       history.set(key, list)
       return ok(request.workPlanId, revision)
+    },
+    async createComponent(request) {
+      return component('create-component', request, null)
+    },
+    async updateComponent(request) {
+      return component('update-component', request, request.componentId)
     },
     async history(request) {
       const call: Call = { kind: 'history', request }

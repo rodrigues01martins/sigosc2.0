@@ -151,6 +151,33 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(as(USERS.SINGLE.uid).doc(v2).get()) // outra OSC
   })
 
+  test('DEV-02.4 (regra) — metas e indicadores: leitura com work-plan.view; nenhuma escrita pelo navegador; sem acesso entre OSCs', async () => {
+    const base = `oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/original`
+    const goal = `${base}/goals/g_0123456789abcdef0123`
+    const indicator = `${base}/indicators/i_0123456789abcdef0123`
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const db = admin.firestore()
+      await db.doc(base).set(workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1' }))
+      await db.doc(goal).set({ id: 'g_0123456789abcdef0123', kind: 'goal', oscId: ALFA, data: { code: 'Meta 01' } })
+      await db.doc(indicator).set({ id: 'i_0123456789abcdef0123', kind: 'indicator', oscId: ALFA, data: { code: 'IND-01' } })
+      await db.doc(`oscs/${GAMA}/partnerships/parceria-gama-1/workPlans/original/goals/g_0123456789abcdef0123`).set({ id: 'x' })
+      await db.doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit'] })
+    })
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(goal).get())
+    await assertSucceeds(delegate.doc(indicator).get())
+    assert.equal((await assertSucceeds(delegate.collection(`${base}/goals`).get())).size, 1)
+    await assertFails(as(operator).doc(goal).get()) // sem work-plan.view
+    for (const path of [goal, indicator]) {
+      await assertFails(delegate.doc(path).update({ data: { code: 'X' } }))
+      await assertFails(delegate.doc(path).delete())
+    }
+    await assertFails(delegate.doc(`${base}/goals/g_ffffffffffffffffffff`).set({ id: 'g_ffffffffffffffffffff' }))
+    await assertFails(delegate.collection(`${base}/indicators`).add({ data: {} }))
+    await assertFails(delegate.doc(`oscs/${GAMA}/partnerships/parceria-gama-1/workPlans/original/goals/g_0123456789abcdef0123`).get())
+    await assertFails(as(USERS.SINGLE.uid).doc(goal).get()) // outra OSC
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())

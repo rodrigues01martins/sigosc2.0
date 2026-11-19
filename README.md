@@ -952,7 +952,7 @@ vinculação futura, sem dependência de arquivo inexistente.
 
 - Correção de erro material: **resolvida pela DEC-PT-002** (11.6-A).
 - Texto integral das decisões DEC-006/032–039 e Inventário FUN: não localizados; campos **T** a confirmar.
-- Metas, indicadores, fórmulas e planejamento financeiro: incrementos futuros. Versões e alterações formais: DEV-02.3 (11.10).
+- Planejamento financeiro e cálculo de fórmulas: incrementos futuros. Versões: DEV-02.3 (11.10); metas e indicadores previstos: DEV-02.4 (11.12).
 - Armazenamento documental (Storage) e permissões do administrador pela Administração da Plataforma.
 
 ### 11.9 Validação no Preview (Firebase de testes)
@@ -1098,6 +1098,89 @@ todas as alterações ativadas têm data de efeitos declarada e em ordem; caso c
    conferir "Data de produção de efeitos administrativos não informada" e Versão 2 substituída.
 5. Consultar e comparar as versões. Reversão: excluir `v2`, `v3`, o campo `activation` da original e os eventos.
 
+### 11.12 Metas, indicadores e resultados previstos (DEV-02.4)
+
+**Escopo:** somente **planejamento** (o que o Plano aprovado prevê). Não há resultados realizados,
+apurações, percentuais de cumprimento, avaliações, evidências ou cálculos. Planejado ≠ realizado.
+
+**Referências verificadas:** HF-G05 / PAG-OSC05 etapa 2 ("Meta 1 (obrigatório)", "Indicador da meta 1
+(obrigatório)", "Fórmula do indicador (obrigatório)"; composição "Metas" e "Indicadores" com código, nome,
+fórmula e meta) e PAG-OSC08 ("Código · Indicador · Meta", "Periodicidade" por indicador; "não há periodicidade
+universal"; apuração/avaliação/ajuste/evidências = módulos futuros). DEC-032/035/037/041/042/043/046: **somente os
+títulos** estão disponíveis; o texto não foi localizado. Inventário FUN: não localizado.
+
+**Matriz de campos** (H = homologado no protótipo; T = decisão técnica; P = proposta sujeita à deliberação).
+Todos: editáveis só com a versão **em cadastramento**; congelados na finalização; **copiados integralmente**
+(mesmo ID lógico) para a nova versão na alteração formal.
+
+| Entidade | Campo (`id`) | Tipo | Fonte | Obrigatório | Validação |
+| --- | --- | --- | --- | --- | --- |
+| Meta | ID lógico (`g_…`) | gerado pelo servidor | T | — | 20 hex; estável entre versões |
+| Meta | Código (`code`) | texto ≤ 20 | H ("Meta 01") | sim | único na versão (sem diferenciar maiúsculas) |
+| Meta | Descrição (`description`) | texto ≤ 2000 | H | sim | sem caracteres de controle |
+| Meta | Natureza (`nature`) | quantitativa / qualitativa | T (DEC-043, título) | sim | qualitativa não recebe número |
+| Meta | Quantidade prevista (`expectedQuantity`) | número c/ estado | T | não | zero ≠ não informado ≠ não se aplica; ≤ 6 decimais |
+| Meta | Unidade (`unit`) | texto c/ estado ≤ 60 | T | não | — |
+| Meta | Resultado previsto, critério de cumprimento, período de referência | texto c/ estado | P | não | — |
+| Meta | Situação no Plano (`status`) | ativa / descontinuada | T | — | exclusão lógica; recusada com indicador ativo vinculado |
+| Indicador | ID lógico (`i_…`), Código (`code`) | — / texto ≤ 20 | T / H ("IND-01") | — / sim | código único na versão |
+| Indicador | Nome (`name`) | texto ≤ 300 | H | sim | — |
+| Indicador | Natureza (`nature`) | quantitativa / qualitativa | T (DEC-043) | sim | — |
+| Indicador | Tipo numérico (`measurementType`) | absoluto, quantidade, percentual, razão, taxa, outro | T | sim, se quantitativo | ausente se qualitativo |
+| Indicador | Resultado previsto (`target`) + unidade | número c/ estado | H ("Meta: 80%") | não | só quantitativo |
+| Indicador | Parâmetro esperado (`expectedParameter`) | texto c/ estado | H ("conforme a meta 2") | não | — |
+| Indicador | Periodicidade (`periodicity`) | mensal…anual, única, outra (descrita) | H (PAG-OSC08) / DEC-041 (título) | não | "outra" exige descrição |
+| Indicador | Fórmula/regra (`rule`) | método + descrição + numerador/denominador/multiplicador | H ("Fórmula") / DEC-042 (título) | descrição: sim | razão exige numerador e denominador; **nunca executada** |
+| Indicador | Categorias (`categories`) | lista ≤ 10 | P | não | só qualitativo; transcritas do Plano |
+| Indicador | Critério de classificação, fonte/meio de verificação, descrição | texto c/ estado | P (DEC-046, título) | não | — |
+| Indicador | Metas vinculadas (`goalIds`) | 0..n IDs da mesma versão | H (1 meta) / T (0..n) | não | metas existentes e ativas |
+
+**Relação meta–indicador:** o protótipo mostra um indicador por meta; o modelo admite **0..n** metas por
+indicador (um indicador pode servir a mais de uma meta; nenhum vínculo artificial é exigido) — proposta técnica.
+
+**Firestore:** `…/workPlans/{workPlanId}/goals/{g_…}` e `…/indicators/{i_…}`; campos `data` (componente),
+`revision`, `inheritedFrom` (versão de origem da cópia), `creationRequestId`, `lastUpdateRequestId`, autoria e
+datas do servidor. Limites: 100 metas e 200 indicadores por versão (cópia cabe numa transação). Leitura pelo
+cliente com `work-plan.view` (nova regra); **nenhuma escrita** pelo navegador.
+
+**Servidor — `/api/osc-work-plan-components`:** `POST {action:'create-goal'|'create-indicator', data}` e
+`PATCH {componentKind, componentId, expectedRevision, data}` (componente completo). Transação: autenticação →
+`work-plan.edit` → parceria → versão → componentes relidos → arquivada/suspensão comercial (suspensão
+administrativa não bloqueia) → versão em cadastramento → validação, código único, limites, integridade dos
+vínculos → revisão → gravação + evento (`goal-created|updated`, `indicator-created|updated`, com campos alterados,
+`linksChanged`, `periodicityChanged`, `criteriaChanged`). ID lógico = hash(usuário, pedido): reenvios e pedidos
+simultâneos colidem no mesmo documento.
+
+**Versões:** `create-version` copia metas e indicadores da base para a nova versão (mesmos IDs; `inheritedFrom`),
+na mesma transação. A comparação usa o ID lógico (mantido, alterado + campos, incluído, descontinuado, reativado).
+
+**Planos já finalizados sem componentes:** *bloqueio seguro* — 409 `complementary-transcription-pending`. Não se
+cria versão formal automaticamente, e a correção material (DEC-PT-002) não aceita componentes. Decisão
+administrativa necessária (proposta **DEC-PT-006**): admitir ou não a transcrição complementar de metas e
+indicadores em Plano já finalizado, com que registro e por quem.
+
+**Interface:** PAG-OSC05 — seção "Metas e indicadores previstos" da versão exibida (metas com seus indicadores,
+indicadores sem meta, descontinuados), cadastro e edição em formulário único quando autorizado, comparação entre
+versões. PAG-OSC08 (`#/parcerias/{id}/indicadores`, "Monitoramento e Avaliação") — somente a tabela dos
+indicadores previstos da versão vigente; sem apuração, avaliação ou botões inoperantes. Números no padrão
+brasileiro ("1.200" = mil e duzentos; vírgula decimal).
+
+**Pendências administrativas (sem bloqueio do que foi implementado):** (1) DEC-PT-006 acima; (2) se metas e
+indicadores passam a ser **obrigatórios para a finalização** (o protótipo marca "Meta 1"/"Indicador"/"Fórmula" como
+obrigatórios, mas a finalização homologada da DEV-02.2 não os exige — mantida); (3) sintaxe, operações e
+arredondamento das fórmulas (DEC-042/046) antes de qualquer cálculo; (4) cardinalidade definitiva meta–indicador e
+vínculo de indicadores a outros componentes; (5) lista de periodicidades e campos P da matriz.
+
+**Validação no Preview (Firebase de testes):**
+1. **Publicar `firestore.rules`** no `sigorsc-testes` (nova leitura de `goals`/`indicators`; 7.6). Sem índices novos.
+2. Implantar a nova função `/api/osc-work-plan-components` (mesmas variáveis da 8.7); conferir 401 sem token.
+3. Parceria com Plano **em cadastramento**: "Adicionar meta" → "Adicionar indicador à meta" (periodicidade,
+   fórmula); conferir `workPlans/original/goals` e `/indicators` e eventos em `workPlanEvents`.
+4. Finalizar; registrar alteração formal; conferir a cópia em `workPlans/v2/...`; alterar uma meta na Versão 2;
+   "Comparar com a anterior". Abrir "Monitoramento e Avaliação".
+5. Plano já finalizado sem metas: conferir a mensagem de bloqueio. Reversão: excluir os documentos de `goals`,
+   `indicators` e os eventos criados.
+
 ## 12. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
@@ -1132,7 +1215,9 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Versões do Plano: alteração formal, histórico, comparação, correção por versão (DEV-02.3) | Implementado; validado em emuladores; **não validado no Preview** |
 | Ativação automática na finalização e vigência cadastral (DEV-02.3-C01; DEC-PT-003/004/005) | Implementado; validado em emuladores; **não validado no Preview** |
 | Regularização de versões legadas finalizadas sem ativação | **Bloqueada** (aguarda decisão administrativa específica) |
-| Metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
+| Metas, indicadores e resultados previstos por versão (DEV-02.4; PAG-OSC05 e consulta na PAG-OSC08) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
+| Transcrição de metas/indicadores em Plano já finalizado sem componentes | **Bloqueada** (aguarda decisão administrativa DEC-PT-006) |
+| Apuração, avaliação, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

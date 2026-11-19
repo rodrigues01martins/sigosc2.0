@@ -1,3 +1,4 @@
+import type { GoalData, IndicatorData, Stored } from '../../domain/workPlanComponents.ts'
 import type { FormalAct, StoredActivationStatus } from '../../domain/workPlanVersions.ts'
 import type { WorkPlanRegistrationStatus, WorkPlanValues } from '../../domain/workPlans.ts'
 import type { PartnershipErrorKind } from '../partnerships/types.ts'
@@ -46,4 +47,18 @@ export interface WorkPlanService {
   get(oscId: string, partnershipId: string): Promise<WorkPlanResult<WorkPlan | null>>
   /** Todas as versões da parceria, em ordem de sequência (lista vazia = não estruturado). */
   listVersions(oscId: string, partnershipId: string): Promise<WorkPlanResult<readonly WorkPlan[]>>
+  /** DEV-02.4: metas e indicadores PREVISTOS de uma versão (componentes inválidos são descartados). */
+  listComponents(oscId: string, partnershipId: string, workPlanId: string): Promise<WorkPlanResult<PlanComponents>>
+}
+
+/** Componentes de planejamento de UMA versão (DEV-02.4). Não há valores realizados. */
+export interface PlanComponents {
+  readonly goals: readonly ComponentRecord<GoalData>[]
+  readonly indicators: readonly ComponentRecord<IndicatorData>[]
+  /** Documentos fora do formato (descartados, nunca exibidos como válidos). */
+  readonly discarded: number
+}
+export interface ComponentRecord<T> extends Stored<T> {
+  /** Versão de onde o componente foi copiado (null = cadastrado nesta versão). */
+  readonly inheritedFrom: string | null
 }

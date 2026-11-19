@@ -3,7 +3,8 @@ import { isValidDate } from '../../domain/partnerships.ts'
 import { FORMAL_ACT_TYPES, isVersionId, parseStoredActivation, type FormalActType } from '../../domain/workPlanVersions.ts'
 import { FIELD_IDS, ORIGINAL_WORK_PLAN_ID, emptyValues, parseFieldValue } from '../../domain/workPlans.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
-import type { WorkPlan } from './types.ts'
+import { isComponentId, validateGoal, validateIndicator, type GoalData, type IndicatorData } from '../../domain/workPlanComponents.ts'
+import type { ComponentRecord, PlanComponents, WorkPlan } from './types.ts'
 
 const PATH = /^oscs\/([^/]+)\/partnerships\/([^/]+)\/workPlans\/([^/]+)$/
 
@@ -80,4 +81,38 @@ export function parseWorkPlan(raw: RawDocument, oscId: string, partnershipId: st
     finalizedAt: toDate(d.finalizedAt),
     finalizedBy: typeof d.finalizedBy === 'string' ? d.finalizedBy : null,
   }
+}
+
+/**
+ * Metas e indicadores de UMA versão (DEV-02.4), revalidados com o mesmo domínio do servidor.
+ * Documento de outro caminho, ID inválido ou conteúdo fora do formato é DESCARTADO (falha fechada);
+ * vínculos a metas inexistentes nesta versão invalidam o indicador.
+ */
+export function parseComponents(raw: { goals: RawDocument[]; indicators: RawDocument[] }, oscId: string, partnershipId: string, workPlanId: string): PlanComponents {
+  const prefix = `oscs/${oscId}/partnerships/${partnershipId}/workPlans/${workPlanId}/`
+  let discarded = 0
+  const meta = (d: RawDocument, collection: string) => {
+    const id = d.path.slice(prefix.length + collection.length + 1)
+    const ok = d.path.startsWith(`${prefix}${collection}/`) && isComponentId(id) && d.data.oscId === oscId && d.data.partnershipId === partnershipId && d.data.workPlanId === workPlanId
+    const revision = typeof d.data.revision === 'number' && Number.isSafeInteger(d.data.revision) && d.data.revision >= 1 ? d.data.revision : 1
+    const inherited = (d.data.inheritedFrom as Record<string, unknown> | null | undefined)?.workPlanId
+    return ok ? { id, revision, inheritedFrom: isVersionId(inherited) ? inherited : null } : null
+  }
+  const goals: ComponentRecord<GoalData>[] = []
+  for (const d of raw.goals) {
+    const m = meta(d, 'goals')
+    const v = m && m.id.startsWith('g_') ? validateGoal(d.data.data) : null
+    if (m && v?.ok) goals.push({ ...m, kind: 'goal', data: v.data })
+    else discarded++
+  }
+  const known = new Set(goals.map((g) => g.id))
+  const indicators: ComponentRecord<IndicatorData>[] = []
+  for (const d of raw.indicators) {
+    const m = meta(d, 'indicators')
+    const v = m && m.id.startsWith('i_') ? validateIndicator(d.data.data, known) : null
+    if (m && v?.ok) indicators.push({ ...m, kind: 'indicator', data: v.data })
+    else discarded++
+  }
+  const byOrder = <T extends { data: { order: number; code: string } }>(a: T, b: T) => a.data.order - b.data.order || a.data.code.localeCompare(b.data.code, 'pt-BR', { numeric: true })
+  return { goals: goals.sort(byOrder), indicators: indicators.sort(byOrder), discarded }
 }
