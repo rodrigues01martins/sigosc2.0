@@ -15,7 +15,7 @@ import {
 import { usePartnershipDependencies } from '../../../hooks/partnershipsContext.ts'
 import { useWorkPlanDependencies } from '../../../hooks/workPlansContext.ts'
 import type { Partnership, PartnershipErrorKind } from '../../../services/partnerships/types.ts'
-import type { WorkPlan } from '../../../services/workPlans/types.ts'
+import type { PlanComponents as PlanComponentsData, WorkPlan } from '../../../services/workPlans/types.ts'
 import {
   ACTIVATION_LABEL,
   activationStatusOf,
@@ -39,7 +39,11 @@ import { WorkPlanCorrection } from './WorkPlanCorrection.tsx'
 import { FormalActForm } from './FormalActForm.tsx'
 import { VersionComparison } from './VersionComparison.tsx'
 import { VersionHistory } from './VersionHistory.tsx'
+import { ComponentReviewFields } from './ComponentReviewFields.tsx'
 import { PlanComponents } from './PlanComponents.tsx'
+import { TranscriptionPanel } from './TranscriptionPanel.tsx'
+import { emptyReview, reviewFromDraft, type ReviewDraft } from './componentForm.ts'
+import { COMPONENTS_DECLARATION, checkComponentReview, componentsToken } from '../../../domain/workPlanComponents.ts'
 import { WorkPlanEditor } from './WorkPlanEditor.tsx'
 import { VIGENCY_BADGE, vigencyNotice } from './vigency.ts'
 
@@ -113,6 +117,10 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const [creatingVersion, setCreatingVersion] = useState(false)
   const [editingAct, setEditingAct] = useState(false)
   const [comparison, setComparison] = useState<{ before: string; after: string } | null>(null)
+  // DEV-02.4-C01: componentes da versão exibida, conferência (DEC-PT-007) e declaração na confirmação.
+  const [components, setComponents] = useState<{ planId: string; data: PlanComponentsData | null } | null>(null)
+  const [review, setReview] = useState<ReviewDraft>(emptyReview)
+  const [declared, setDeclared] = useState(false)
   const requestIds = useRef({ start: globalThis.crypto.randomUUID(), finalize: globalThis.crypto.randomUUID(), version: globalThis.crypto.randomUUID() })
   const callbacks = useRef({ onResolved, onNotFound })
   useEffect(() => {
@@ -190,12 +198,15 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const defaultId = pending?.id ?? currentId ?? versions[0]?.id ?? null
   const plan: WorkPlan | null = versions.find((v) => v.id === (selectedId ?? defaultId)) ?? versions[0] ?? null
   const currentPlan = versions.find((v) => v.id === currentId) ?? null
-  const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions, currentId) : null
+  // DEC-PT-006 (3.7): a incorporação aberta também bloqueia nova versão na interface (sem botão inoperante).
+  const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions.map((v) => ({ ...v, transcriptionOpen: v.transcription?.status === 'open' })), currentId) : null
   const today = todayInBrasilia()
   const planVigency = plan ? activationStatusOf(plan, currentId) : 'in-registration'
   const notice2 = plan ? vigencyNotice(plan, planVigency, versions, today) : null
   function selectVersion(id: string) {
     setSelectedId(id)
+    setReview(emptyReview())
+    setDeclared(false)
     setCorrecting(false)
     setConfirming(false)
     setEditingAct(false)
@@ -207,7 +218,14 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const finalize = decideWorkPlanOperation(context, 'finalize', p.administrativeStatus, situation)
   const correction = decideWorkPlanOperation(context, 'correct', p.administrativeStatus, situation)
   const facts = { instrument: p.instrument, termStart: p.termStart, termEnd: p.termEnd, formalizationDate: p.formalizationDate, administrativeStatus: p.administrativeStatus, workPlanApprovalDeclared: p.workPlanApprovalDeclared }
-  const check = plan ? checkVersionFinalization(plan.values, facts, plan.sequence > 1 ? plan.formalAct : null, todayInBrasilia()) : null
+  const baseCheck = plan ? checkVersionFinalization(plan.values, facts, plan.sequence > 1 ? plan.formalAct : null, todayInBrasilia()) : null
+  const loaded = plan && components?.planId === plan.id ? components.data : null
+  // DEC-PT-007: conferência dos componentes avaliada também aqui (o servidor reavalia na transação).
+  const reviewPending = loaded ? checkComponentReview(reviewFromDraft(review), loaded.goals, loaded.indicators) : ['Consultando metas e indicadores…']
+  const check = baseCheck ? { pending: [...baseCheck.pending, ...reviewPending], warnings: baseCheck.warnings } : null
+  const activeCounts = { goals: loaded?.goals.filter((g) => g.data.status === 'active').length ?? 0, indicators: loaded?.indicators.filter((i) => i.data.status === 'active').length ?? 0 }
+  const transcriptionDecision = plan ? decideWorkPlanOperation(context, 'correct', p.administrativeStatus, plan.registrationStatus) : null
+  const inTranscription = plan?.registrationStatus === 'finalized' && plan.transcription?.status === 'open' && transcriptionDecision?.allowed === true
   const who = (uid: string | null) => (uid && uid === context.uid ? ' · por você' : '')
 
   async function startRegistration() {
@@ -227,8 +245,21 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   async function confirmFinalization() {
     if (busy || !plan) return
     setBusy(true)
-    const result = await workPlans.api.finalize({ oscId: context.oscId, partnershipId, workPlanId: plan.id, requestId: requestIds.current.finalize, expectedRevision: plan.revision })
-    if (result.ok) requestIds.current.finalize = globalThis.crypto.randomUUID()
+    const result = await workPlans.api.finalize({
+      oscId: context.oscId,
+      partnershipId,
+      workPlanId: plan.id,
+      requestId: requestIds.current.finalize,
+      expectedRevision: plan.revision,
+      review: reviewFromDraft(review),
+      componentsToken: componentsToken([...(loaded?.goals ?? []), ...(loaded?.indicators ?? [])]),
+      declaration: declared,
+    })
+    if (result.ok) {
+      requestIds.current.finalize = globalThis.crypto.randomUUID()
+      setReview(emptyReview())
+    }
+    setDeclared(false)
     setBusy(false)
     setConfirming(false)
     if (result.ok) {
@@ -451,9 +482,21 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             context={context}
             partnershipId={partnershipId}
             plan={plan}
-            canEdit={plan.registrationStatus === 'in-registration' && edit.allowed}
+            canEdit={(plan.registrationStatus === 'in-registration' && edit.allowed) || inTranscription}
             editDenial={edit.allowed ? null : denialText(edit, 'Você pode consultar as metas e os indicadores, mas não possui autorização para alterá-los.')}
             onNotice={setNotice}
+            onComponents={(data) => setComponents({ planId: plan.id, data })}
+          />
+          <TranscriptionPanel
+            key={`t-${plan.id}`}
+            context={context}
+            partnershipId={partnershipId}
+            plan={plan}
+            eligibleVersion={plan.id === currentId && !versions.some((v) => v.registrationStatus === 'in-registration')}
+            canOperate={transcriptionDecision?.allowed === true}
+            components={loaded}
+            onNotice={setNotice}
+            onChanged={refresh}
           />
 
           <section className={ds.card} aria-labelledby="osc05-financeiro">
@@ -468,6 +511,14 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
               <h2 id="osc05-finalizacao" className={ds.sectionTitle}>
                 Conferência para finalização interna
               </h2>
+              {finalize.allowed ? (
+                <>
+                  <h3 className={ds.cardTitle} style={{ margin: 0 }}>
+                    Conferência de metas e indicadores
+                  </h3>
+                  <ComponentReviewFields value={review} onChange={setReview} counts={activeCounts} disabled={busy} />
+                </>
+              ) : null}
               {check.pending.length > 0 ? (
                 <div className={ds.stack}>
                   <p className={ds.muted}>Pendências que impedem a finalização:</p>
@@ -499,11 +550,15 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
                         A finalização não representa aprovação jurídica nem oficial do Plano{plan.sequence > 1 ? ', e a vigência no SIGOSC é apenas cadastral' : ''}.
                         Alterações formais posteriores são registradas como nova versão.
                       </span>
+                      <label className={styles.check}>
+                        <input type="checkbox" checked={declared} onChange={(e) => setDeclared(e.target.checked)} autoFocus />
+                        <span>{COMPONENTS_DECLARATION}</span>
+                      </label>
                       <div className={styles.actions}>
                         <button type="button" className={ds.linkButton} onClick={() => setConfirming(false)} disabled={busy}>
                           Cancelar
                         </button>
-                        <button type="button" className={ds.primary} onClick={() => void confirmFinalization()} disabled={busy} aria-busy={busy} autoFocus>
+                        <button type="button" className={ds.primary} onClick={() => void confirmFinalization()} disabled={busy || !declared} aria-busy={busy}>
                           {busy ? 'Finalizando…' : 'Finalizar cadastro'}
                         </button>
                       </div>
@@ -531,7 +586,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
               <span>
                 Cadastro finalizado internamente em {formatTimestamp(plan.finalizedAt)}
                 {who(plan.finalizedBy)}. O registro está preservado e não representa aprovação jurídica. Erros materiais de registro podem ser
-                corrigidos com justificativa e ficam no histórico; alterações formais dependem do versionamento, ainda não disponível.
+                corrigidos com justificativa e ficam no histórico; alterações formais são registradas como nova versão.
               </span>
             </p>
           ) : null}

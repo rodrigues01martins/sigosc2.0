@@ -141,3 +141,53 @@ test('DEV-02.4-T25 — planejado ≠ realizado: campos de resultado apurado são
     assert.ok(!validateIndicator(indicator({ [key]: 1 }), known).ok, key)
   }
 })
+
+// ============================================================================ DEV-02.4-C01
+import { checkComponentReview, componentsToken, parseReview, qualitativeImpact } from './workPlanComponents.ts'
+
+const stored = <T,>(id: string, kind: 'goal' | 'indicator', data: T, revision = 1): Stored<T> => ({ id, kind, data, revision })
+const G = (status: 'active' | 'discontinued' = 'active') => stored(G1, 'goal', { ...(validateGoal(goal()) as { ok: true; data: GoalData }).data, status })
+const I = (extra: Record<string, unknown> = {}) => stored('i_00000000000000000001', 'indicator', (validateIndicator(indicator(extra), known) as { ok: true; data: IndicatorData }).data)
+const R = (goals: string, indicators: string, j: string | null = null) => ({ goals: { status: goals, justification: j }, indicators: { status: indicators, justification: j } }) as Parameters<typeof checkComponentReview>[0]
+
+test('DEV-02.4-C01-T26 — periodicidade "não se aplica" exige justificativa; distinta de não informada', () => {
+  const na = validateIndicator(indicator({ periodicity: { state: 'not-applicable', justification: 'Apurado uma única vez no encerramento.' } }), known)
+  assert.ok(na.ok && na.data.periodicity.state === 'not-applicable' && periodicityLabel(na.data.periodicity).startsWith('Não se aplica — Apurado'))
+  for (const bad of [{ state: 'not-applicable' }, { state: 'not-applicable', justification: 'curta' }, { state: 'not-applicable', justification: 'Justificativa válida aqui', extra: 1 }]) {
+    const v = validateIndicator(indicator({ periodicity: bad }), known)
+    assert.ok(!v.ok, JSON.stringify(bad))
+  }
+  const none = validateIndicator(indicator({ periodicity: { state: 'not-informed' } }), known)
+  assert.ok(none.ok && none.data.periodicity.state === 'not-informed', 'registros antigos não são convertidos em "não se aplica"')
+})
+
+test('DEV-02.4-C01-T15/T16/T17/T18/T19/T27 — conferência: explícita, justificada, sem mínimo universal', () => {
+  assert.deepEqual(checkComponentReview(R('transcribed', 'transcribed'), [G()], [I()]), [])
+  assert.deepEqual(checkComponentReview(R('none-in-document', 'not-applicable', 'O Plano não prevê esta categoria.'), [], []), []) // T19
+  assert.match(checkComponentReview(R('pending', 'transcribed'), [G()], [I()]).join(' '), /Metas: há componentes pendentes/) // T18
+  assert.match(checkComponentReview(R('none-in-document', 'none-in-document'), [], []).join(' '), /informe a justificativa/) // T17
+  assert.match(checkComponentReview(R('none-in-document', 'transcribed', 'O Plano não prevê metas.'), [G()], [I()]).join(' '), /há componentes ativos registrados/)
+  assert.match(checkComponentReview(R('transcribed', 'transcribed'), [], [I()]).join(' '), /Metas: declaradas como transcritas, mas não há/)
+  assert.match(checkComponentReview(R('transcribed', 'transcribed'), [G()], [I({ periodicity: { state: 'not-informed' } })]).join(' '), /Periodicidade pendente: IND-01/) // T27
+  assert.deepEqual(checkComponentReview(R('transcribed', 'transcribed'), [G()], [I({ periodicity: { state: 'not-applicable', justification: 'Apuração única ao final.' } })]), [])
+  // Descontinuado: sem obrigação de periodicidade; não conta como ativo.
+  const disc = stored('i_00000000000000000002', 'indicator', { ...I({ periodicity: { state: 'not-informed' } }).data, status: 'discontinued' as const })
+  assert.deepEqual(checkComponentReview(R('transcribed', 'transcribed'), [G()], [I(), disc]), [])
+  // Ausência de registros não vira inexistência automaticamente: sem escolha = pendente.
+  assert.equal(parseReview({ goals: { status: 'pending' }, indicators: { status: 'pending' } })?.goals.status, 'pending')
+  for (const bad of [null, {}, { goals: { status: 'x' }, indicators: { status: 'pending' } }, { goals: { status: 'pending', other: 1 }, indicators: { status: 'pending' } }]) assert.equal(parseReview(bad), null)
+})
+
+test('DEV-02.4-C01-T29 — impressão digital da conferência: determinística, independe da ordem, muda com a revisão', () => {
+  const a = { kind: 'goal' as const, id: G1, revision: 1 }
+  const b = { kind: 'indicator' as const, id: 'i_00000000000000000001', revision: 3 }
+  assert.equal(componentsToken([a, b]), componentsToken([b, a]))
+  assert.notEqual(componentsToken([a, b]), componentsToken([a, { ...b, revision: 4 }]))
+  assert.match(componentsToken([]), /^0-[0-9a-f]{8}$/)
+})
+
+test('DEV-02.4-C01-T28 — troca de natureza: impacto listado (nada descartado em silêncio)', () => {
+  assert.deepEqual(qualitativeImpact('goal', { unit: { state: 'informed', value: 'pessoas' }, expectedQuantity: { state: 'informed', value: 0 } }), ['Unidade de medida', 'Quantidade prevista'])
+  assert.deepEqual(qualitativeImpact('indicator', I().data), ['Unidade de medida', 'Resultado previsto (valor-alvo)', 'Tipo de resultado numérico', 'Método, numerador, denominador e multiplicador da fórmula'])
+  assert.deepEqual(qualitativeImpact('goal', { unit: { state: 'not-informed' }, expectedQuantity: { state: 'not-informed' } }), [])
+})

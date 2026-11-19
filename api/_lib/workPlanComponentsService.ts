@@ -82,8 +82,8 @@ class Outcome extends Error {
     this.response = response
   }
 }
-type ComponentDenial = WorkPlanDenial | 'complementary-transcription-pending'
-const CONFLICTS: readonly ComponentDenial[] = ['already-finalized', 'complementary-transcription-pending']
+type ComponentDenial = WorkPlanDenial | 'complementary-transcription-pending' | 'transcription-closed'
+const CONFLICTS: readonly ComponentDenial[] = ['already-finalized', 'complementary-transcription-pending', 'transcription-closed']
 const deny = (reason: ComponentDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 
 function storedOf<T>(snap: DocumentSnapshot, kind: ComponentKind, knownGoals: ReadonlySet<string>): Stored<T> {
@@ -133,11 +133,15 @@ async function run(deps: ServerDeps, uid: string, request: Parsed): Promise<ApiR
         return json(200, { ok: true, changed: false, component: { id: componentId, kind: componentKind, revision: target.get('revision') } })
       }
 
-      // 3. Ciclo de vida: parceria e versão (finalizada = sem edição comum).
+      // 3. Ciclo de vida: parceria e versão. Finalizada = sem edição comum; a ÚNICA exceção é a
+      //    incorporação complementar ABERTA no servidor (DEC-PT-006) — nunca um campo da requisição.
       const registration = planSnap.get('registrationStatus') === 'finalized' ? 'finalized' : 'in-registration'
-      const decision = decideWorkPlanOperation(context, 'update', partnership.administrativeStatus, registration)
+      const transcription = planSnap.get('complementaryTranscription.status')
+      const inTranscription = registration === 'finalized' && transcription === 'open'
+      const decision = decideWorkPlanOperation(context, 'update', partnership.administrativeStatus, inTranscription ? 'in-registration' : registration)
       if (!decision.allowed) {
-        // Plano finalizado SEM componentes: a transcrição complementar depende de decisão administrativa.
+        if (decision.reason === 'already-finalized' && transcription === 'closed') throw deny('transcription-closed')
+        // Plano finalizado SEM componentes e sem incorporação aberta: indicar o procedimento próprio.
         if (decision.reason === 'already-finalized' && goalsSnap.empty && indicatorsSnap.empty) throw deny('complementary-transcription-pending')
         throw deny(decision.reason)
       }
@@ -193,6 +197,9 @@ async function run(deps: ServerDeps, uid: string, request: Parsed): Promise<ApiR
         periodicityChanged: fields.includes('periodicity'),
         criteriaChanged: fields.some((f) => ['rule', 'target', 'expectedParameter', 'categories', 'classificationCriterion', 'completionCriterion', 'expectedQuantity', 'expectedResult'].includes(f)),
         statusChanged: fields.includes('status') ? (data.status as string) : null,
+        // DEC-PT-009: inaplicabilidade da periodicidade é auditável com a justificativa.
+        periodicityNotApplicable: componentKind === 'indicator' && (data as IndicatorData).periodicity.state === 'not-applicable' && fields.includes('periodicity') ? ((data as IndicatorData).periodicity as { justification: string }).justification : null,
+        procedure: inTranscription ? 'complementary-transcription' : 'registration',
         actorUid: uid,
         actorAuthority: decision.authority,
         requestId,

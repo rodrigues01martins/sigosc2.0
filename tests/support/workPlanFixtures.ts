@@ -16,6 +16,8 @@ export interface WorkPlanFixture {
   activation?: string | null
   createdBy?: string
   /** DEV-02.4: metas e indicadores PREVISTOS desta versão (dados fictícios). */
+  /** DEV-02.4-C01: incorporação complementar gravada (DEC-PT-006). */
+  transcription?: { status: 'open' | 'closed'; revision?: number }
   goals?: readonly ComponentFixture[]
   indicators?: readonly ComponentFixture[]
 }
@@ -111,6 +113,7 @@ export function workPlanDocument(p: WorkPlanFixture) {
     updatedAt: CREATED,
     updatedBy: p.createdBy ?? 'uid-ficticio-operator',
     ...(finalized ? { finalizedAt: CREATED, finalizedBy: 'uid-ficticio-operator', finalizationRequestId: 'req-final' } : {}),
+    ...(p.transcription ? { complementaryTranscription: { status: p.transcription.status, revision: p.transcription.revision ?? (p.transcription.status === 'open' ? 1 : 2), openedAt: CREATED, openedBy: 'uid-ficticio-operator', ...(p.transcription.status === 'closed' ? { closedAt: CREATED, closedBy: 'uid-ficticio-operator' } : {}) } } : {}),
   }
 }
 

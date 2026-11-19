@@ -23,6 +23,8 @@ interface Props {
   /** Mensagem quando a edição não é possível por autorização/ciclo de vida (null = nada a dizer). */
   editDenial: string | null
   onNotice(notice: { kind: 'success' | 'error'; text: string }): void
+  /** Componentes carregados (conferência da finalização e da incorporação, DEC-PT-006/007). */
+  onComponents?(data: Components | null): void
 }
 
 /**
@@ -30,12 +32,16 @@ interface Props {
  * Indicadores"). Somente planejamento: não há resultados apurados, percentuais de cumprimento
  * nem avaliações. Cada componente pertence a esta versão; versões anteriores ficam preservadas.
  */
-export function PlanComponents({ context, partnershipId, plan, canEdit, editDenial, onNotice }: Props) {
+export function PlanComponents({ context, partnershipId, plan, canEdit, editDenial, onNotice, onComponents }: Props) {
   const { service, api } = useWorkPlanDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [editing, setEditing] = useState<Editing>(null)
   const requestId = useRef(globalThis.crypto.randomUUID())
+  const reported = useRef(onComponents)
+  useEffect(() => {
+    reported.current = onComponents
+  })
   const label = versionLabel(plan.sequence)
 
   useEffect(() => {
@@ -43,11 +49,12 @@ export function PlanComponents({ context, partnershipId, plan, canEdit, editDeni
     void service.listComponents(context.oscId, partnershipId, plan.id).then((r) => {
       if (!alive) return
       setState(r.ok ? { status: 'ready', data: r.data } : { status: 'error', text: PARTNERSHIP_LOAD_ERROR[r.error] })
+      reported.current?.(r.ok ? r.data : null)
     })
     return () => {
       alive = false
     }
-  }, [service, context.oscId, partnershipId, plan.id, plan.revision, attempt])
+  }, [service, context.oscId, partnershipId, plan.id, plan.revision, plan.transcription?.status, attempt])
 
   const reload = () => setAttempt((n) => n + 1)
   const data = state.status === 'ready' ? state.data : null
@@ -218,7 +225,7 @@ export function PlanComponents({ context, partnershipId, plan, canEdit, editDeni
             <p className={`${ds.info} ${styles.iconNote}`} role="note">
               <InfoIcon />
               <span>
-                {plan.registrationStatus === 'finalized'
+                {plan.registrationStatus === 'finalized' && !canEdit
                   ? denialMessage('complementary-transcription-pending', '')
                   : canEdit
                     ? 'Nenhuma meta ou indicador registrado nesta versão. Registre-os como constam do Plano aprovado.'

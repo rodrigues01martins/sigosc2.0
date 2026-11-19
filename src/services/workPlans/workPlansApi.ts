@@ -2,7 +2,7 @@
  * Cliente de `/api/osc-work-plans` (DEV-02.2): iniciar, alterar e finalizar o cadastro estruturado.
  * O cliente não decide autorização; falhas de infraestrutura nunca viram sucesso simulado.
  */
-import type { ComponentErrorCode, ComponentKind, GoalData, IndicatorData } from '../../domain/workPlanComponents.ts'
+import type { ComponentErrorCode, ComponentKind, ComponentReview, GoalData, IndicatorData } from '../../domain/workPlanComponents.ts'
 import type { FormalAct, FormalActErrorCode, FormalActField, VersionDenial } from '../../domain/workPlanVersions.ts'
 import type { CorrectionErrorCode, CorrectionErrorKey, FieldErrorCode, FieldValue, WorkPlanDenial, WorkPlanField } from '../../domain/workPlans.ts'
 
@@ -61,7 +61,12 @@ export type HistoryResult = { readonly ok: true; readonly entries: readonly Corr
 export interface WorkPlansApi {
   start(request: { oscId: string; partnershipId: string; requestId: string }): Promise<WorkPlansResult>
   update(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedRevision: number; changes: Partial<Record<WorkPlanField, FieldValue>> }): Promise<WorkPlansResult>
-  finalize(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedRevision: number }): Promise<WorkPlansResult>
+  /** DEC-PT-007: a finalização leva a conferência dos componentes, a impressão digital vista e a declaração. */
+  finalize(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean }): Promise<WorkPlansResult>
+  /** DEC-PT-006: abrir a incorporação complementar na versão vigente finalizada sem componentes. */
+  openTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; declaration: boolean }): Promise<WorkPlansResult>
+  /** DEC-PT-006: encerrar a incorporação (conferência + declaração). */
+  closeTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedTranscriptionRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean }): Promise<WorkPlansResult>
   /** DEV-02.3: nova versão integral a partir da vigente (alteração formal). */
   createVersion(request: { oscId: string; partnershipId: string; requestId: string; baseWorkPlanId: string; baseRevision: number; formalAct: FormalAct }): Promise<WorkPlansResult>
   /** DEV-02.3: dados do ato formal de versão ainda em cadastramento. */
@@ -131,8 +136,10 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
         if (typeof body.reason === 'string') return { ok: false, error: 'forbidden', reason: body.reason as VersionDenial }
         return { ok: false, error: body.error === 'stale' ? 'stale' : body.error === 'not-structured' ? 'not-structured' : 'unknown' }
       case 422:
-        return body.error === 'finalization-pending'
+        return body.error === 'finalization-pending' || body.error === 'review-pending'
           ? { ok: false, error: 'finalization-pending', pending: (body.pending ?? []) as string[] }
+          : body.error === 'declaration-required'
+            ? { ok: false, error: 'finalization-pending', pending: ['Confirme a declaração de correspondência ao Plano aprovado.'] }
           : body.error === 'invalid-correction'
             ? { ok: false, error: 'invalid-correction', fields: (body.fields ?? {}) as WorkPlansFailure['fields'], pending: (body.pending ?? undefined) as string[] | undefined }
             : body.error === 'invalid-formal-act'
@@ -154,7 +161,7 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     const { body } = result
     const plan = body.workPlan as Record<string, unknown> | undefined
     if (typeof plan?.revision !== 'number' || typeof plan.id !== 'string') return { ok: false, error: 'unknown' }
-    const changed = body.created === true || body.changed === true || body.finalized === true || body.corrected === true
+    const changed = body.created === true || body.changed === true || body.finalized === true || body.corrected === true || body.opened === true || body.closed === true
     const activation =
       plan.activationStatus === 'active' && typeof plan.supersededWorkPlanId === 'string' && typeof plan.sequence === 'number'
         ? { supersededWorkPlanId: plan.supersededWorkPlanId, sequence: plan.sequence, effectiveDate: typeof plan.effectiveDate === 'string' ? plan.effectiveDate : null }
@@ -173,7 +180,11 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
   return {
     start: ({ oscId, partnershipId, requestId }) => call('POST', { oscId, partnershipId, requestId, action: 'start' }),
     update: (request) => call('PATCH', request),
-    finalize: ({ oscId, partnershipId, workPlanId, requestId, expectedRevision }) => call('POST', { oscId, partnershipId, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true }),
+    finalize: ({ oscId, partnershipId, workPlanId, requestId, expectedRevision, review, componentsToken, declaration }) =>
+      call('POST', { oscId, partnershipId, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true, review, componentsToken, declaration }),
+    openTranscription: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'open-transcription', declaration: r.declaration }),
+    closeTranscription: (r) =>
+      call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'close-transcription', expectedTranscriptionRevision: r.expectedTranscriptionRevision, review: r.review, componentsToken: r.componentsToken, declaration: r.declaration }),
     createVersion: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, requestId: r.requestId, action: 'create-version', baseWorkPlanId: r.baseWorkPlanId, baseRevision: r.baseRevision, formalAct: r.formalAct }),
     updateFormalAct: (r) => call('PATCH', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, expectedRevision: r.expectedRevision, formalAct: r.formalAct }),
     correct: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'correct', expectedRevision: r.expectedRevision, changes: r.changes, justification: r.justification, declaration: r.declaration }),

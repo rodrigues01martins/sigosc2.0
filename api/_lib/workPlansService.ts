@@ -5,10 +5,13 @@
  * POST  {oscId, partnershipId, requestId, action: 'start'}                                   → iniciar a versão original
  * PATCH {oscId, partnershipId, [workPlanId], requestId, expectedRevision, changes}           → editar cadastro em andamento
  * PATCH {oscId, partnershipId, workPlanId, requestId, expectedRevision, formalAct}           → editar o ato formal (versão em andamento)
- * POST  {..., [workPlanId], action: 'finalize', expectedRevision, confirm: true}             → finalizar internamente
+ * POST  {..., [workPlanId], action: 'finalize', expectedRevision, confirm: true, review, componentsToken, declaration}
+ *       → finalizar internamente com a conferência de metas e indicadores (DEC-PT-007)
  *       (versão posterior: finalização + ATIVAÇÃO cadastral na mesma transação — DEC-PT-003)
  * POST  {..., [workPlanId], action: 'correct', expectedRevision, changes, justification, declaration} → correção material
  * POST  {..., action: 'create-version', baseWorkPlanId, baseRevision, formalAct}             → nova versão (alteração formal)
+ * POST  {..., workPlanId, action: 'open-transcription', declaration}                           → abrir incorporação complementar (DEC-PT-006)
+ * POST  {..., workPlanId, action: 'close-transcription', expectedTranscriptionRevision, review, componentsToken, declaration} → encerrar
  * GET   ?oscId=…&partnershipId=…[&workPlanId=…]                                              → histórico de correções
  *
  * Todas as gravações exigem `work-plan.edit` (DEC-PT-001); o histórico exige `work-plan.view`.
@@ -30,6 +33,7 @@ import { isAdministrativeStatus, isInstrument, isValidDate } from '../../src/dom
 import {
   checkVersionFinalization,
   checkActivationChain,
+  currentVersionId,
   effectsStatus,
   parseStoredActivation,
   decideVersionCreation,
@@ -58,7 +62,8 @@ import {
   type WorkPlanValues,
 } from '../../src/domain/workPlans.ts'
 import { MAX_BODY_BYTES } from './limits.ts'
-import { copyComponents, readComponentsForCopy } from './workPlanComponentsCopy.ts'
+import { copyComponents, readComponentsForCopy, storedComponents } from './workPlanComponentsCopy.ts'
+import { COMPONENTS_DECLARATION, COMPONENTS_TOKEN_PATTERN, TRANSCRIPTION_DECLARATION, checkComponentReview, componentsToken, parseReview, type ComponentReview } from '../../src/domain/workPlanComponents.ts'
 import { serverToday } from './partnershipsService.ts'
 import { membershipFacts, organizationFacts, type ApiRequest, type ApiResponse, type ServerDeps } from './permissionsService.ts'
 
@@ -77,7 +82,9 @@ interface Base {
 }
 type Parsed =
   | (Base & { kind: 'start' })
-  | (Base & { kind: 'finalize'; workPlanId: string; expectedRevision: number })
+  | (Base & { kind: 'finalize'; workPlanId: string; expectedRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean })
+  | (Base & { kind: 'open-transcription'; workPlanId: string; declaration: boolean })
+  | (Base & { kind: 'close-transcription'; workPlanId: string; expectedTranscriptionRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean })
   | (Base & { kind: 'update'; workPlanId: string; expectedRevision: number; changes: Record<string, unknown> })
   | (Base & { kind: 'update-act'; workPlanId: string; expectedRevision: number; formalAct: unknown })
   | (Base & { kind: 'correct'; workPlanId: string; expectedRevision: number; changes: unknown; justification: unknown; declaration: unknown })
@@ -119,10 +126,24 @@ function parse(method: string | undefined, rawBody: string): Parsed | null {
     return null
   }
   if (body.action === 'start' && keysMatch(body, ['oscId', 'partnershipId', 'requestId', 'action'], false)) return { ...base, kind: 'start' }
-  if (body.action === 'finalize' && keysMatch(body, ['oscId', 'partnershipId', 'requestId', 'action', 'expectedRevision', 'confirm'])) {
+  if (body.action === 'finalize' && keysMatch(body, ['oscId', 'partnershipId', 'requestId', 'action', 'expectedRevision', 'confirm', 'review', 'componentsToken', 'declaration'])) {
     // A confirmação explícita é exigida também no servidor (operação que preserva o registro).
-    if (body.confirm !== true || !isRevision(body.expectedRevision)) return null
-    return { ...base, kind: 'finalize', workPlanId, expectedRevision: body.expectedRevision }
+    // DEC-PT-007: conferência de metas e indicadores + declaração de correspondência, na MESMA operação.
+    const review = parseReview(body.review)
+    if (body.confirm !== true || !isRevision(body.expectedRevision) || !review || typeof body.declaration !== 'boolean') return null
+    if (typeof body.componentsToken !== 'string' || !COMPONENTS_TOKEN_PATTERN.test(body.componentsToken)) return null
+    return { ...base, kind: 'finalize', workPlanId, expectedRevision: body.expectedRevision, review, componentsToken: body.componentsToken, declaration: body.declaration }
+  }
+  // DEC-PT-006: incorporação complementar — abrir e encerrar são ações PRÓPRIAS (workPlanId obrigatório).
+  if (body.action === 'open-transcription' && keysMatch(body, ['oscId', 'partnershipId', 'workPlanId', 'requestId', 'action', 'declaration'], false)) {
+    if (typeof body.declaration !== 'boolean') return null
+    return { ...base, kind: 'open-transcription', workPlanId, declaration: body.declaration }
+  }
+  if (body.action === 'close-transcription' && keysMatch(body, ['oscId', 'partnershipId', 'workPlanId', 'requestId', 'action', 'expectedTranscriptionRevision', 'review', 'componentsToken', 'declaration'], false)) {
+    const review = parseReview(body.review)
+    if (!review || !isRevision(body.expectedTranscriptionRevision) || typeof body.declaration !== 'boolean') return null
+    if (typeof body.componentsToken !== 'string' || !COMPONENTS_TOKEN_PATTERN.test(body.componentsToken)) return null
+    return { ...base, kind: 'close-transcription', workPlanId, expectedTranscriptionRevision: body.expectedTranscriptionRevision, review, componentsToken: body.componentsToken, declaration: body.declaration }
   }
   if (body.action === 'correct' && keysMatch(body, ['oscId', 'partnershipId', 'requestId', 'action', 'expectedRevision', 'changes', 'justification', 'declaration'])) {
     if (!isRevision(body.expectedRevision)) return null
@@ -151,7 +172,22 @@ class Outcome extends Error {
     this.response = response
   }
 }
-const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'not-finalized', 'base-not-current', 'base-not-finalized', 'pending-version-exists', 'legacy-version-pending', 'versions-inconsistent']
+const CONFLICTS: readonly VersionDenial[] = [
+  'already-finalized',
+  'not-finalized',
+  'base-not-current',
+  'base-not-finalized',
+  'pending-version-exists',
+  'legacy-version-pending',
+  'versions-inconsistent',
+  'transcription-open',
+  'transcription-not-current',
+  'components-exist',
+  'transcription-already-open',
+  'transcription-closed',
+  'transcription-not-open',
+  'components-changed',
+]
 const deny = (reason: VersionDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 
 export function partnershipFacts(snap: DocumentSnapshot | undefined, oscId: string): PartnershipFacts | null {
@@ -204,6 +240,7 @@ function summaryOf(snap: DocumentSnapshot): VersionSummary {
     registrationStatus: snap.get('registrationStatus') === 'finalized' ? 'finalized' : 'in-registration',
     activationStatus: parseStoredActivation(snap.get('activation.status')),
     previousWorkPlanId: isVersionId(previous) ? previous : null,
+    transcriptionOpen: snap.get('complementaryTranscription.status') === 'open',
   }
 }
 const isoOf = (value: unknown) => (value && typeof (value as { toDate?: unknown }).toDate === 'function' ? (value as { toDate(): Date }).toDate().toISOString() : null)
@@ -291,6 +328,67 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         const copied = copyComponents(tx, components, plans.doc(id), { oscId, partnershipId, workPlanId: id, baseWorkPlanId: request.baseWorkPlanId, uid, now })
         tx.create(events.doc(), { action: 'version-created', oscId, partnershipId, workPlanId: id, previousWorkPlanId: request.baseWorkPlanId, baseRevision: request.baseRevision, sequence, actType: act.act.type, copiedComponents: copied, actorUid: uid, actorAuthority: decision.authority, at: now })
         return json(201, { ok: true, created: true, workPlan: { id, revision: 1, registrationStatus: 'in-registration', sequence } })
+      }
+
+      // ------------------------------------------------------------- DEC-PT-006: incorporação complementar
+      if (request.kind === 'open-transcription' || request.kind === 'close-transcription') {
+        if (!planSnap?.exists) throw new Outcome(json(404, { error: 'not-found' }))
+        const t = (planSnap.get('complementaryTranscription') ?? null) as Record<string, unknown> | null
+        const state = (status: string, revision: number) => ({ id: workPlanId, revision: revisionOf(planSnap), registrationStatus: 'finalized', transcription: { status, revision } })
+        // Reenvio do MESMO pedido pelo MESMO usuário: estado confirmado, sem novo evento.
+        if (request.kind === 'open-transcription' && t?.openRequestId === requestId && t?.openedBy === uid) return json(200, { ok: true, opened: false, workPlan: state(String(t.status), Number(t.revision)) })
+        if (request.kind === 'close-transcription' && t?.status === 'closed' && t?.closeRequestId === requestId && t?.closedBy === uid) return json(200, { ok: true, closed: false, workPlan: state('closed', Number(t.revision)) })
+        // Permissão, suspensão comercial, arquivada e versão FINALIZADA (a operação é exclusiva de Plano finalizado).
+        const decision = decideWorkPlanOperation(context, 'correct', partnership.administrativeStatus, registrationOf(planSnap))
+        if (!decision.allowed) throw deny(decision.reason)
+        const all = await tx.get(plans.limit(MAX_VERSIONS))
+        const versions = all.docs.filter((d) => d.get('partnershipId') === partnershipId).map(summaryOf)
+        const source = await readComponentsForCopy(tx, planRef)
+        const now = FieldValue.serverTimestamp()
+        const common = { oscId, partnershipId, workPlanId, sequence: sequenceOf(planSnap), actorUid: uid, actorAuthority: decision.authority, requestId, procedure: 'complementary-transcription', at: now }
+        if (request.kind === 'open-transcription') {
+          if (t?.status === 'open') throw deny('transcription-already-open')
+          if (t?.status === 'closed') throw deny('transcription-closed')
+          if (currentVersionId(versions) !== workPlanId) throw deny('transcription-not-current')
+          if (versions.some((v) => v.registrationStatus === 'in-registration')) throw deny('pending-version-exists')
+          if (source.goals.length + source.indicators.length > 0) throw deny('components-exist')
+          if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
+          tx.update(planRef, {
+            complementaryTranscription: {
+              status: 'open',
+              revision: 1,
+              rule: 'DEC-PT-006',
+              openedAt: now,
+              openedBy: uid,
+              openRequestId: requestId,
+              openDeclaration: { accepted: true, text: TRANSCRIPTION_DECLARATION, automatedVerification: false },
+            },
+          })
+          tx.create(events.doc(), { action: 'complementary-transcription-opened', ...common, rule: 'DEC-PT-006', declaration: TRANSCRIPTION_DECLARATION, transcriptionRevision: 1 })
+          return json(201, { ok: true, opened: true, workPlan: state('open', 1) })
+        }
+        if (t?.status !== 'open') throw deny(t?.status === 'closed' ? 'transcription-closed' : 'transcription-not-open')
+        const revision = Number(t.revision)
+        if (revision !== request.expectedTranscriptionRevision) throw new Outcome(json(409, { error: 'stale', revision }))
+        const components = storedComponents(source)
+        if (!components) throw new Outcome(json(409, { error: 'invalid-state' }))
+        if (componentsToken([...components.goals, ...components.indicators]) !== request.componentsToken) throw deny('components-changed')
+        const pending = checkComponentReview(request.review, components.goals, components.indicators)
+        if (pending.length) throw new Outcome(json(422, { error: 'review-pending', pending }))
+        if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
+        const counts = { goals: components.goals.length, indicators: components.indicators.length }
+        tx.update(planRef, {
+          'complementaryTranscription.status': 'closed',
+          'complementaryTranscription.revision': revision + 1,
+          'complementaryTranscription.closedAt': now,
+          'complementaryTranscription.closedBy': uid,
+          'complementaryTranscription.closeRequestId': requestId,
+          'complementaryTranscription.review': { goals: request.review.goals, indicators: request.review.indicators },
+          'complementaryTranscription.counts': counts,
+          'complementaryTranscription.closeDeclaration': { accepted: true, text: COMPONENTS_DECLARATION, automatedVerification: false },
+        })
+        tx.create(events.doc(), { action: 'complementary-transcription-closed', ...common, rule: 'DEC-PT-006', review: request.review, counts, componentsToken: request.componentsToken, declaration: COMPONENTS_DECLARATION, transcriptionRevision: revision + 1 })
+        return json(200, { ok: true, closed: true, workPlan: state('closed', revision + 1) })
       }
 
       // ------------------------------------------------------------- cadastro do documento indicado
@@ -423,9 +521,16 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         supersededId = chain.supersededId
         supersededSnap = docs.find((d) => d.id === supersededId)
       }
+      // DEC-PT-007: metas e indicadores relidos NESTA transação; conferência e impressão digital.
+      const components = storedComponents(await readComponentsForCopy(tx, planRef))
+      if (!components) throw new Outcome(json(409, { error: 'invalid-state' }))
+      if (componentsToken([...components.goals, ...components.indicators]) !== request.componentsToken) throw deny('components-changed')
       const act = sequence > 1 ? storedAct(snap) : null
       const check = checkVersionFinalization(values, partnership, act, today)
-      if (check.pending.length > 0) throw new Outcome(json(422, { error: 'finalization-pending', pending: check.pending, warnings: check.warnings }))
+      const pending = [...check.pending, ...checkComponentReview(request.review, components.goals, components.indicators)]
+      if (pending.length > 0) throw new Outcome(json(422, { error: 'finalization-pending', pending, warnings: check.warnings }))
+      if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
+      const counts = { goals: components.goals.length, indicators: components.indicators.length }
       tx.update(planRef, {
         registrationStatus: 'finalized',
         revision: current + 1,
@@ -434,11 +539,22 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         finalizedBy: uid,
         updatedAt: now,
         updatedBy: uid,
+        componentReview: {
+          rule: 'DEC-PT-007',
+          goals: request.review.goals,
+          indicators: request.review.indicators,
+          counts,
+          componentsToken: request.componentsToken,
+          declaration: { accepted: true, text: COMPONENTS_DECLARATION, automatedVerification: false },
+          reviewedAt: now,
+          reviewedBy: uid,
+        },
         ...(supersededId
           ? { activation: { status: 'active', rule: 'DEC-PT-003', activatedAt: now, activatedBy: uid, supersededWorkPlanId: supersededId, finalizationRequestId: requestId } }
           : {}),
       })
       tx.create(events.doc(), { action: 'finalize', oscId, partnershipId, workPlanId, sequence, actorUid: uid, actorAuthority: decision.authority, requestId, fromRevision: current, toRevision: current + 1, warnings: check.warnings.length, at: now })
+      tx.create(events.doc(), { action: 'components-reviewed', rule: 'DEC-PT-007', oscId, partnershipId, workPlanId, sequence, actorUid: uid, actorAuthority: decision.authority, requestId, review: request.review, counts, componentsToken: request.componentsToken, declaration: COMPONENTS_DECLARATION, revision: current + 1, at: now })
       if (supersededId && supersededSnap) {
         // Somente os metadados de vigência da versão substituída (sem revogação jurídica; valores intactos).
         tx.update(supersededSnap.ref, {

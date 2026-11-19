@@ -3,7 +3,7 @@
  * Módulo separado para não criar dependência circular com `workPlansService.ts`.
  */
 import type { DocumentReference, DocumentSnapshot, FieldValue, Transaction } from 'firebase-admin/firestore'
-import { LIMITS } from '../../src/domain/workPlanComponents.ts'
+import { LIMITS, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
 
 /**
  * Cópia INTEGRAL dos componentes na criação de nova versão (DEC-034): mesmos IDs lógicos, dados
@@ -45,4 +45,29 @@ export function copyComponents(
     }
   }
   return source.goals.length + source.indicators.length
+}
+
+/**
+ * Componentes relidos e REVALIDADOS (conferência da finalização e do encerramento da incorporação).
+ * Qualquer documento fora do formato → `null` (a operação é recusada; nada é presumido).
+ */
+export function storedComponents(source: { goals: DocumentSnapshot[]; indicators: DocumentSnapshot[] }): { goals: Stored<GoalData>[]; indicators: Stored<IndicatorData>[] } | null {
+  const known = new Set(source.goals.map((d) => d.id))
+  const revisionOf = (d: DocumentSnapshot) => {
+    const r: unknown = d.get('revision')
+    return typeof r === 'number' && Number.isSafeInteger(r) && r >= 1 ? r : 1
+  }
+  const goals: Stored<GoalData>[] = []
+  for (const d of source.goals) {
+    const v = validateGoal(d.get('data'))
+    if (!v.ok) return null
+    goals.push({ id: d.id, kind: 'goal', data: v.data, revision: revisionOf(d) })
+  }
+  const indicators: Stored<IndicatorData>[] = []
+  for (const d of source.indicators) {
+    const v = validateIndicator(d.get('data'), known)
+    if (!v.ok) return null
+    indicators.push({ id: d.id, kind: 'indicator', data: v.data, revision: revisionOf(d) })
+  }
+  return { goals, indicators }
 }

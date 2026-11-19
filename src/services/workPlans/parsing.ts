@@ -3,7 +3,7 @@ import { isValidDate } from '../../domain/partnerships.ts'
 import { FORMAL_ACT_TYPES, isVersionId, parseStoredActivation, type FormalActType } from '../../domain/workPlanVersions.ts'
 import { FIELD_IDS, ORIGINAL_WORK_PLAN_ID, emptyValues, parseFieldValue } from '../../domain/workPlans.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
-import { isComponentId, validateGoal, validateIndicator, type GoalData, type IndicatorData } from '../../domain/workPlanComponents.ts'
+import { isComponentId, parseReview, validateGoal, validateIndicator, type GoalData, type IndicatorData } from '../../domain/workPlanComponents.ts'
 import type { ComponentRecord, PlanComponents, WorkPlan } from './types.ts'
 
 const PATH = /^oscs\/([^/]+)\/partnerships\/([^/]+)\/workPlans\/([^/]+)$/
@@ -80,7 +80,32 @@ export function parseWorkPlan(raw: RawDocument, oscId: string, partnershipId: st
     updatedBy: typeof d.updatedBy === 'string' ? d.updatedBy : null,
     finalizedAt: toDate(d.finalizedAt),
     finalizedBy: typeof d.finalizedBy === 'string' ? d.finalizedBy : null,
+    transcription: parseTranscription(d.complementaryTranscription),
+    componentReview: parseStoredReview(d.componentReview),
   }
+}
+
+function parseTranscription(raw: unknown): WorkPlan['transcription'] {
+  if (typeof raw !== 'object' || raw === null) return null
+  const t = raw as Record<string, unknown>
+  if (t.status !== 'open' && t.status !== 'closed') return null
+  const revision = typeof t.revision === 'number' && Number.isSafeInteger(t.revision) && t.revision >= 1 ? t.revision : 1
+  return {
+    status: t.status,
+    revision,
+    openedAt: toDate(t.openedAt),
+    openedBy: typeof t.openedBy === 'string' ? t.openedBy : null,
+    closedAt: toDate(t.closedAt),
+    closedBy: typeof t.closedBy === 'string' ? t.closedBy : null,
+    review: parseReview(t.review),
+  }
+}
+
+function parseStoredReview(raw: unknown): WorkPlan['componentReview'] {
+  if (typeof raw !== 'object' || raw === null) return null
+  const r = raw as Record<string, unknown>
+  const review = parseReview({ goals: r.goals, indicators: r.indicators })
+  return review ? { ...review, reviewedAt: toDate(r.reviewedAt), reviewedBy: typeof r.reviewedBy === 'string' ? r.reviewedBy : null } : null
 }
 
 /**

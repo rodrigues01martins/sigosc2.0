@@ -178,6 +178,19 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(as(USERS.SINGLE.uid).doc(goal).get()) // outra OSC
   })
 
+  test('DEV-02.4-C01 (regra) — incorporação e conferência: navegador não grava estado excepcional', async () => {
+    const plan = `oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/original`
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc(plan).set({ ...workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1', status: 'finalized' }) })
+      await admin.firestore().doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit'] })
+    })
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(plan).get())
+    await assertFails(delegate.doc(plan).update({ complementaryTranscription: { status: 'open' } }))
+    await assertFails(delegate.doc(plan).update({ componentReview: { goals: { status: 'transcribed' } } }))
+    await assertFails(delegate.doc(`${plan}/goals/g_0123456789abcdef0123`).set({ data: {} }))
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())

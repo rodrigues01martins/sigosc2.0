@@ -169,3 +169,10 @@ test('DEV-02.3-T10/T11/T12 — comparação: alterado, mantido, incluído, N/A, 
   const zeroToZero = diffVersions({ ...emptyValues(), estimatedBeneficiaries: informed(0) }, { ...emptyValues(), estimatedBeneficiaries: informed(0) })
   assert.equal(zeroToZero.find((d) => d.field === 'estimatedBeneficiaries')?.kind, 'unchanged')
 })
+
+test('DEV-02.4-C01 — 3.7: incorporação aberta na base bloqueia nova versão (sem versão híbrida)', () => {
+  const base = [{ ...v('original', 1, 'finalized'), transcriptionOpen: true }]
+  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', base, 'original'), { allowed: false, reason: 'transcription-open' })
+  assert.equal(decideVersionCreation(editor, 'em-execucao', [v('original', 1, 'finalized')], 'original').allowed, true)
+  assert.match(denialMessage('transcription-open', ''), /Encerre-a antes de registrar nova alteração formal/)
+})

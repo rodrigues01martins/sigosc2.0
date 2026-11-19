@@ -269,7 +269,7 @@ export const WORK_PLAN_MESSAGE: Partial<Record<WorkPlanDenial, string>> = {
   'commercial-suspension': 'A OSC está com a situação comercial suspensa. Novos registros estão bloqueados.',
   'partnership-archived': 'Parceria arquivada: o Plano de Trabalho está disponível somente para consulta.',
   'already-finalized':
-    'O cadastro estruturado já foi finalizado internamente e está preservado. Edições comuns não são possíveis; use a correção de erro material, quando cabível. Alterações formais dependem do versionamento (incremento futuro).',
+    'O cadastro estruturado já foi finalizado internamente e está preservado. Edições comuns não são possíveis; use a correção de erro material, quando cabível. Alterações formais são registradas como nova versão.',
   'not-finalized': 'A correção de erro material só se aplica a Plano finalizado. Enquanto em cadastramento, use a edição comum.',
 }
 

@@ -13,6 +13,7 @@ import { handleWorkPlansRequest } from '../../api/_lib/workPlansService.ts'
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath } from '../support/organizationFixtures.ts'
 import { PARTNERSHIPS, partnershipDocument, partnershipPath } from '../support/partnershipFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
+import { reviewed } from '../support/reviewFixtures.ts'
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'demo-sigosc-server'
 process.env.GCLOUD_PROJECT = PROJECT_ID
@@ -73,7 +74,7 @@ const events = async () => (await deps.db.collection(`oscs/${ALFA}/workPlanEvent
 async function finalizedOriginal(partnershipId = RUNNING) {
   status(await call(OP, 'POST', { oscId: ALFA, partnershipId, requestId: nextRequest(), action: 'start' }), 201)
   status(await call(OP, 'PATCH', { oscId: ALFA, partnershipId, requestId: nextRequest(), expectedRevision: 1, changes: { ...REQUIRED, estimatedBeneficiaries: informed(0), geographicScope: { state: 'not-applicable' }, justification: informed('Atendimento original.') } }), 200)
-  status(await call(OP, 'POST', { oscId: ALFA, partnershipId, requestId: nextRequest(), action: 'finalize', expectedRevision: 2, confirm: true }), 200)
+  status(await call(OP, 'POST', { oscId: ALFA, partnershipId, requestId: nextRequest(), action: 'finalize', expectedRevision: 2, confirm: true, ...reviewed() }), 200)
 }
 const createVersion = (user: { uid: string }, options: { partnershipId?: string; base?: string; baseRevision?: number; act?: unknown; requestId?: string; oscId?: string } = {}) =>
   call(user, 'POST', {
@@ -88,7 +89,7 @@ const createVersion = (user: { uid: string }, options: { partnershipId?: string;
 const update = (user: { uid: string }, workPlanId: string, changes: Record<string, unknown>, expectedRevision: number) =>
   call(user, 'PATCH', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId: nextRequest(), expectedRevision, changes })
 const finalize = (user: { uid: string }, workPlanId: string, expectedRevision: number) =>
-  call(user, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId: nextRequest(), action: 'finalize', expectedRevision, confirm: true })
+  call(user, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId: nextRequest(), action: 'finalize', expectedRevision, confirm: true, ...reviewed() })
 
 before(async () => {
   const resolved = getServerDeps({ ...process.env, GCLOUD_PROJECT: PROJECT_ID })
@@ -266,7 +267,7 @@ describe('Restrições e isolamento', () => {
 
 // ============================================================================ DEV-02.3-C01
 const finalizeReq = (user: { uid: string }, workPlanId: string, expectedRevision: number, requestId = nextRequest(), extra: Record<string, unknown> = {}) =>
-  call(user, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true, ...extra })
+  call(user, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true, ...reviewed(), ...extra })
 /** Original finalizado + v2 criada (revisão 1) com o ato indicado. */
 async function withDraftV2(act: Record<string, unknown> = ACT) {
   await finalizedOriginal()
@@ -410,7 +411,7 @@ describe('DEV-02.3-C01 — preservação, segurança e legado', () => {
 
   test('C01-T23/T24 — outra OSC e sem autorização não ativam; suspensão comercial e arquivada bloqueiam; suspensa admite', async () => {
     await withDraftV2()
-    status(await call(OP, 'POST', { oscId: GAMA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'finalize', expectedRevision: 1, confirm: true }), 403, 'no-membership')
+    status(await call(OP, 'POST', { oscId: GAMA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'finalize', expectedRevision: 1, confirm: true, ...reviewed() }), 403, 'no-membership')
     await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
     status(await finalizeReq(OP, 'v2', 1), 403, 'commercial-suspension')
     await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'active' })

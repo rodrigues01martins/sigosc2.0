@@ -137,6 +137,16 @@ function Choice({ legend, name, value, options, onChange, error, required }: { l
   )
 }
 
+/** Aviso da troca de natureza (DEC-PT-010): o que deixará de valer ao salvar; a auditoria registra a mudança. */
+function NatureImpact({ lost, nature }: { lost: readonly string[]; nature: string }) {
+  if (lost.length === 0) return null
+  return (
+    <p className={ds.warning} role="status">
+      Ao salvar como {nature}, deixarão de valer: {lost.join('; ')}. Os valores continuam no formulário até salvar, e a alteração fica registrada na auditoria.
+    </p>
+  )
+}
+
 const STATUS_OPTIONS = [
   { id: 'active', label: 'Ativa no Plano' },
   { id: 'discontinued', label: 'Descontinuada nesta versão' },
@@ -197,6 +207,8 @@ export function GoalFormCard({ initial, suggestedCode, order, versionLabel, onSu
     return v.ok ? { ok: true, data: v.data } : { ok: false, errors: v.errors }
   }, (d) => onSubmit(d as GoalData))
   const quantitative = f.nature === 'quantitative'
+  // DEC-PT-010: valores informados que deixariam de valer ao trocar a natureza (nunca descartados em silêncio).
+  const lost = f.nature === 'qualitative' ? [f.expectedQuantity.text.trim() ? 'Quantidade prevista' : null, f.unit.text.trim() ? 'Unidade de medida' : null].filter((x): x is string => x !== null) : []
   return (
     <Shell
       title={initial ? `Editar meta ${initial.code}` : 'Adicionar meta'}
@@ -217,6 +229,7 @@ export function GoalFormCard({ initial, suggestedCode, order, versionLabel, onSu
         </Field>
       </div>
       <Choice legend="Natureza da meta" name="nature" value={f.nature} options={NATURES} onChange={(v) => set('nature', v)} error={errors.nature} required />
+      <NatureImpact lost={lost} nature="qualitativa" />
       <div className={styles.formGrid}>
         {quantitative ? (
           <>
@@ -260,6 +273,12 @@ export function IndicatorFormCard({ initial, suggestedCode, order, versionLabel,
   }, (d) => onSubmit(d as IndicatorData))
   const quantitative = f.nature === 'quantitative'
   const selectable = goals.filter((g) => g.active || f.goalIds.includes(g.id))
+  const lost =
+    f.nature === 'qualitative'
+      ? [f.measurementType ? 'Tipo de resultado numérico' : null, f.target.text.trim() ? 'Resultado previsto (valor-alvo)' : null, f.unit.text.trim() ? 'Unidade de medida' : null, f.ruleMethod !== 'described' ? 'Método, numerador, denominador e multiplicador' : null].filter((x): x is string => x !== null)
+      : f.nature === 'quantitative' && f.categories.trim()
+        ? ['Categorias de classificação']
+        : []
   return (
     <Shell
       title={initial ? `Editar indicador ${initial.code}` : 'Adicionar indicador'}
@@ -280,6 +299,7 @@ export function IndicatorFormCard({ initial, suggestedCode, order, versionLabel,
         </Field>
       </div>
       <Choice legend="Natureza do indicador" name="nature" value={f.nature} options={NATURES} onChange={(v) => set('nature', v)} error={errors.nature} required />
+      <NatureImpact lost={lost} nature={f.nature === 'qualitative' ? 'qualitativo' : 'quantitativo'} />
       <fieldset className={styles.fieldset} aria-describedby={errors.goalIds ? `${id}-goals-e` : `${id}-goals-h`}>
         <legend className={styles.label}>Metas vinculadas</legend>
         {selectable.length === 0 ? (
@@ -332,7 +352,7 @@ export function IndicatorFormCard({ initial, suggestedCode, order, versionLabel,
           </>
         ) : null}
         <OptionalField id={`${id}-param`} label="Parâmetro esperado" value={f.expectedParameter} onChange={(v) => set('expectedParameter', v)} error={errors.expectedParameter} hint={quantitative ? 'Complemento textual, se houver (ex.: "conforme a meta 2").' : 'Condição objetiva de atendimento, como consta do Plano.'} long max={LIMITS.longText} />
-        <Field id={`${id}-per`} label="Periodicidade do indicador" error={errors.periodicity} hint="Individual por indicador; não há periodicidade universal.">
+        <Field id={`${id}-per`} label="Periodicidade do indicador" error={f.periodicityKind === 'not-applicable' ? undefined : errors.periodicity} hint="Individual por indicador. Pode ficar pendente durante o cadastro; deve estar resolvida para finalizar.">
           {(p) => (
             <select {...p} className={styles.input} value={f.periodicityKind} onChange={(e) => set('periodicityKind', e.target.value)}>
               <option value="">Não informada</option>
@@ -341,9 +361,15 @@ export function IndicatorFormCard({ initial, suggestedCode, order, versionLabel,
                   {x.label}
                 </option>
               ))}
+              <option value="not-applicable">Não se aplica (justificar)</option>
             </select>
           )}
         </Field>
+        {f.periodicityKind === 'not-applicable' ? (
+          <Field id={`${id}-perj`} label="Justificativa da inaplicabilidade" required error={errors.periodicity} hint="Obrigatória; mínimo de 10 caracteres." wide>
+            {(p) => <textarea {...p} className={styles.textarea} value={f.periodicityJustification} maxLength={LIMITS.longText} onChange={(e) => set('periodicityJustification', e.target.value)} />}
+          </Field>
+        ) : null}
         {f.periodicityKind === 'other' ? (
           <Field id={`${id}-perdesc`} label="Descrição da periodicidade" required error={errors.periodicity}>
             {(p) => <input {...p} className={styles.input} value={f.periodicityDescription} maxLength={LIMITS.shortText} onChange={(e) => set('periodicityDescription', e.target.value)} />}

@@ -192,6 +192,8 @@ export interface VersionSummary {
   readonly activationStatus: StoredActivationStatus | null
   /** Versão de origem (somente versões posteriores). */
   readonly previousWorkPlanId?: string | null
+  /** DEC-PT-006: incorporação complementar em andamento nesta versão. */
+  readonly transcriptionOpen?: boolean
 }
 
 export type CurrentResolution =
@@ -319,8 +321,17 @@ export type VersionDenial =
   | 'pending-version-exists'
   | 'legacy-version-pending'
   | 'versions-inconsistent'
-  /** DEV-02.4: metas/indicadores em versão FINALIZADA sem componentes — aguarda decisão administrativa. */
+  /** DEV-02.4: metas/indicadores em versão FINALIZADA sem componentes e sem incorporação aberta. */
   | 'complementary-transcription-pending'
+  /** DEV-02.4-C01 (DEC-PT-006): incorporação complementar. */
+  | 'transcription-open'
+  | 'transcription-not-current'
+  | 'components-exist'
+  | 'transcription-already-open'
+  | 'transcription-closed'
+  | 'transcription-not-open'
+  /** DEC-PT-007: componentes alterados depois da conferência exibida. */
+  | 'components-changed'
 export type VersionDecision = WorkPlanDecision | { readonly allowed: false; readonly reason: VersionDenial }
 
 /**
@@ -343,6 +354,8 @@ export function decideVersionCreation(
   if (!base || base.registrationStatus !== 'finalized') return { allowed: false, reason: 'base-not-finalized' }
   if (versions.some((v) => v.registrationStatus === 'in-registration')) return { allowed: false, reason: 'pending-version-exists' }
   if (versions.some((v) => activationStatusOf(v, null) === 'legacy-pending')) return { allowed: false, reason: 'legacy-version-pending' }
+  // DEC-PT-006 (3.7): nenhuma versão parte de base com incorporação complementar aberta.
+  if (versions.some((v) => v.transcriptionOpen)) return { allowed: false, reason: 'transcription-open' }
   if (resolution.status !== 'determined' || resolution.id !== baseId) return { allowed: false, reason: 'base-not-current' }
   return decision
 }
@@ -369,7 +382,14 @@ export const VERSION_MESSAGE: Partial<Record<VersionDenial, string>> = {
     'Há versão finalizada antes da regra de ativação (DEC-PT-003) que não foi ativada. Nova alteração formal fica bloqueada até a regularização administrativa.',
   'versions-inconsistent': 'Não foi possível identificar com segurança a versão vigente. Nenhuma alteração foi feita; procure o suporte.',
   'complementary-transcription-pending':
-    'Esta versão já foi finalizada sem metas e indicadores estruturados. A transcrição complementar em Plano finalizado depende de decisão administrativa; nenhuma alteração foi feita.',
+    'Esta versão foi finalizada sem metas e indicadores estruturados. Para transcrevê-los, use "Incorporar metas e indicadores do Plano aprovado" (DEC-PT-006).',
+  'transcription-open': 'Há incorporação complementar de metas e indicadores em andamento na versão vigente. Encerre-a antes de registrar nova alteração formal.',
+  'transcription-not-current': 'A incorporação complementar só é admitida na versão vigente no SIGOSC.',
+  'components-exist': 'Esta versão já possui metas ou indicadores registrados; a incorporação complementar não se aplica.',
+  'transcription-already-open': 'Já existe incorporação complementar em andamento nesta versão. Retome-a.',
+  'transcription-closed': 'A incorporação complementar desta versão já foi encerrada; não são admitidas novas alterações.',
+  'transcription-not-open': 'Não há incorporação complementar em andamento nesta versão.',
+  'components-changed': 'Metas ou indicadores foram alterados depois da conferência exibida. Os dados foram recarregados; confira novamente.',
 }
 
 /** Finalização de versão posterior: requisitos do Plano + ato formal válido (H: tipo e data). */

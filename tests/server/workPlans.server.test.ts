@@ -19,6 +19,7 @@ import { CORRECTION_DECLARATION } from '../../src/domain/workPlans.ts'
 import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath } from '../support/organizationFixtures.ts'
 import { PARTNERSHIPS, partnershipDocument, partnershipPath } from '../support/partnershipFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
+import { reviewed } from '../support/reviewFixtures.ts'
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'demo-sigosc-server'
 process.env.GCLOUD_PROJECT = PROJECT_ID
@@ -74,7 +75,7 @@ const start = (user: { uid: string }, partnershipId = RUNNING, options: { oscId?
 const update = (user: { uid: string }, changes: Record<string, unknown>, options: { partnershipId?: string; revision?: number; requestId?: string; oscId?: string } = {}) =>
   call(user, 'PATCH', { oscId: options.oscId ?? ALFA, partnershipId: options.partnershipId ?? RUNNING, requestId: options.requestId ?? nextRequest(), expectedRevision: options.revision ?? 1, changes })
 const finalize = (user: { uid: string }, options: { partnershipId?: string; revision?: number; requestId?: string } = {}) =>
-  call(user, 'POST', { oscId: ALFA, partnershipId: options.partnershipId ?? RUNNING, requestId: options.requestId ?? nextRequest(), action: 'finalize', expectedRevision: options.revision ?? 1, confirm: true })
+  call(user, 'POST', { oscId: ALFA, partnershipId: options.partnershipId ?? RUNNING, requestId: options.requestId ?? nextRequest(), action: 'finalize', expectedRevision: options.revision ?? 1, confirm: true, ...reviewed() })
 const plan = async (partnershipId = RUNNING, oscId = ALFA) => (await deps.db.doc(`oscs/${oscId}/partnerships/${partnershipId}/workPlans/original`).get()).data()
 const events = async () => (await deps.db.collection(`oscs/${ALFA}/workPlanEvents`).get()).docs.map((d) => d.data())
 const status = (response: ApiResponse, expected: number, reason?: string) => {

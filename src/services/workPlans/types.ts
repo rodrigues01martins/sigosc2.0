@@ -1,4 +1,4 @@
-import type { GoalData, IndicatorData, Stored } from '../../domain/workPlanComponents.ts'
+import type { ComponentReview, GoalData, IndicatorData, Stored } from '../../domain/workPlanComponents.ts'
 import type { FormalAct, StoredActivationStatus } from '../../domain/workPlanVersions.ts'
 import type { WorkPlanRegistrationStatus, WorkPlanValues } from '../../domain/workPlans.ts'
 import type { PartnershipErrorKind } from '../partnerships/types.ts'
@@ -37,6 +37,18 @@ export interface WorkPlan {
   readonly updatedBy: string | null
   readonly finalizedAt: Date | null
   readonly finalizedBy: string | null
+  /** DEC-PT-006: incorporação complementar (null = não iniciada). */
+  readonly transcription: {
+    readonly status: 'open' | 'closed'
+    readonly revision: number
+    readonly openedAt: Date | null
+    readonly openedBy: string | null
+    readonly closedAt: Date | null
+    readonly closedBy: string | null
+    readonly review: ComponentReview | null
+  } | null
+  /** DEC-PT-007: conferência registrada na finalização regular (null nas finalizações anteriores). */
+  readonly componentReview: (ComponentReview & { readonly reviewedAt: Date | null; readonly reviewedBy: string | null }) | null
 }
 
 export type WorkPlanResult<T> = { readonly ok: true; readonly data: T } | { readonly ok: false; readonly error: PartnershipErrorKind }

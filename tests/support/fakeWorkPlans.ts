@@ -4,7 +4,7 @@
  * servidor confirmaria (com as validações de domínio), para exercitar a interface.
  */
 import { checkActivationChain, checkVersionFinalization, decideVersionCreation, parseStoredActivation, validateFormalAct, versionIdFor, type VersionSummary } from '../../src/domain/workPlanVersions.ts'
-import { isDuplicateCode, linkIntegrity, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
+import { checkComponentReview, componentsToken, isDuplicateCode, linkIntegrity, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
 import { emptyValues, validateCorrection, type FieldValue, type WorkPlanField, type WorkPlanValues } from '../../src/domain/workPlans.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import type { WorkPlansSdk } from '../../src/services/workPlans/workPlanService.ts'
@@ -15,7 +15,7 @@ export interface FakeWorkPlansDb {
   readonly kind: 'fake-work-plans'
 }
 
-type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act' | 'create-component' | 'update-component'
+type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act' | 'create-component' | 'update-component' | 'open-transcription' | 'close-transcription'
 type Call = { kind: Kind; request: Record<string, unknown> }
 
 const TODAY = '2026-11-17'
@@ -90,6 +90,12 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
   }
   const valuesOf = (doc: Record<string, unknown>) => ({ ...emptyValues(), ...(doc.values as object) }) as WorkPlanValues
 
+  const storedOf = (planPath: string) => {
+    const goals = componentsOf(planPath, 'goals').map((c) => ({ id: c.id, kind: 'goal' as const, data: c.doc.data as GoalData, revision: (c.doc.revision as number) ?? 1 }))
+    const indicators = componentsOf(planPath, 'indicators').map((c) => ({ id: c.id, kind: 'indicator' as const, data: c.doc.data as IndicatorData, revision: (c.doc.revision as number) ?? 1 }))
+    return { goals, indicators }
+  }
+
   /** Meta/indicador como o servidor confirmaria (validação do domínio; sem autorização). */
   async function component(kind: 'create-component' | 'update-component', request: Parameters<WorkPlansApi['createComponent']>[0] & { componentId?: string; expectedRevision?: number }, componentId: string | null): Promise<ComponentResult> {
     const call: Call = { kind, request: request as unknown as Record<string, unknown> }
@@ -101,7 +107,9 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
     if (!plan) return { ok: false, error: 'not-found' }
     const goalsNow = componentsOf(planPath, 'goals')
     const indicatorsNow = componentsOf(planPath, 'indicators')
-    if (plan.registrationStatus === 'finalized') return { ok: false, error: 'forbidden', reason: goalsNow.length + indicatorsNow.length === 0 ? 'complementary-transcription-pending' : 'already-finalized' }
+    const transcription = (plan.complementaryTranscription as { status?: string } | undefined)?.status
+    if (plan.registrationStatus === 'finalized' && transcription !== 'open')
+      return { ok: false, error: 'forbidden', reason: transcription === 'closed' ? 'transcription-closed' : goalsNow.length + indicatorsNow.length === 0 ? 'complementary-transcription-pending' : 'already-finalized' }
     const known = new Set(goalsNow.map((g) => g.id))
     const v = request.kind === 'goal' ? validateGoal(request.data) : validateIndicator(request.data, known)
     if (!v.ok) return { ok: false, error: 'invalid-component', fields: v.errors }
@@ -161,19 +169,23 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       const path = workPlanPath(request.oscId, request.partnershipId, request.workPlanId)
       const doc = docs.get(path)
       if (!doc) return { ok: false, error: 'not-structured' }
+      const stored = storedOf(path)
+      if (componentsToken([...stored.goals, ...stored.indicators]) !== request.componentsToken) return { ok: false, error: 'forbidden', reason: 'components-changed' }
       const check = checkVersionFinalization(valuesOf(doc), FACTS, null, TODAY)
-      if (check.pending.length) return { ok: false, error: 'finalization-pending', pending: check.pending }
+      const pending = [...check.pending, ...checkComponentReview(request.review, stored.goals, stored.indicators)]
+      if (pending.length) return { ok: false, error: 'finalization-pending', pending }
+      if (!request.declaration) return { ok: false, error: 'finalization-pending', pending: ['Confirme a declaração de correspondência ao Plano aprovado.'] }
       const sequence = (doc.origin as { sequence: number }).sequence
       const revision = (doc.revision as number) + 1
       if (sequence === 1) {
-        docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: new Date(), finalizedBy: 'simulado' })
+        docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: new Date(), finalizedBy: 'simulado', componentReview: { ...request.review, reviewedAt: new Date(), reviewedBy: 'simulado' } })
         return ok(request.workPlanId, revision)
       }
       // DEC-PT-003 (como o servidor): finalização + ativação; a vigente anterior passa a substituída.
       const chain = checkActivationChain(summariesOf(request.oscId, request.partnershipId), request.workPlanId)
       if (!chain.ok) return { ok: false, error: 'forbidden', reason: chain.reason }
       const now = new Date()
-      docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: now, finalizedBy: 'simulado', activation: { status: 'active', activatedAt: now, supersededWorkPlanId: chain.supersededId } })
+      docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: now, finalizedBy: 'simulado', componentReview: { ...request.review, reviewedAt: now, reviewedBy: 'simulado' }, activation: { status: 'active', activatedAt: now, supersededWorkPlanId: chain.supersededId } })
       const prevPath = workPlanPath(request.oscId, request.partnershipId, chain.supersededId)
       const prev = docs.get(prevPath) as Record<string, unknown>
       docs.set(prevPath, { ...prev, activation: { ...(prev.activation as object | undefined), status: 'superseded', supersededAt: now, supersededByWorkPlanId: request.workPlanId } })
@@ -220,6 +232,37 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       list.push({ workPlanId: request.workPlanId, at: new Date('2026-11-17T15:00:00Z').toISOString(), actor: 'you', actorAuthority: 'member', corrections: validation.items, justification: validation.justification, fromRevision: revision - 1, toRevision: revision })
       history.set(key, list)
       return ok(request.workPlanId, revision)
+    },
+    async openTranscription(request) {
+      const custom = await intercept('open-transcription', request)
+      if (custom) return custom
+      const path = workPlanPath(request.oscId, request.partnershipId, request.workPlanId)
+      const doc = docs.get(path)
+      if (!doc) return { ok: false, error: 'not-found' }
+      const t = doc.complementaryTranscription as { status?: string } | undefined
+      if (doc.registrationStatus !== 'finalized') return { ok: false, error: 'forbidden', reason: 'not-finalized' }
+      if (t?.status === 'open') return { ok: false, error: 'forbidden', reason: 'transcription-already-open' }
+      if (t?.status === 'closed') return { ok: false, error: 'forbidden', reason: 'transcription-closed' }
+      if (componentsOf(path, 'goals').length + componentsOf(path, 'indicators').length > 0) return { ok: false, error: 'forbidden', reason: 'components-exist' }
+      if (!request.declaration) return { ok: false, error: 'finalization-pending', pending: ['Confirme a declaração de correspondência ao Plano aprovado.'] }
+      docs.set(path, { ...doc, complementaryTranscription: { status: 'open', revision: 1, openedAt: new Date(), openedBy: 'simulado' } })
+      return ok(request.workPlanId, doc.revision as number)
+    },
+    async closeTranscription(request) {
+      const custom = await intercept('close-transcription', request)
+      if (custom) return custom
+      const path = workPlanPath(request.oscId, request.partnershipId, request.workPlanId)
+      const doc = docs.get(path)
+      const t = doc?.complementaryTranscription as { status?: string; revision?: number } | undefined
+      if (!doc || t?.status !== 'open') return { ok: false, error: 'forbidden', reason: 'transcription-not-open' }
+      if (t.revision !== request.expectedTranscriptionRevision) return { ok: false, error: 'stale' }
+      const stored = storedOf(path)
+      if (componentsToken([...stored.goals, ...stored.indicators]) !== request.componentsToken) return { ok: false, error: 'forbidden', reason: 'components-changed' }
+      const pending = checkComponentReview(request.review, stored.goals, stored.indicators)
+      if (pending.length) return { ok: false, error: 'finalization-pending', pending }
+      if (!request.declaration) return { ok: false, error: 'finalization-pending', pending: ['Confirme a declaração de correspondência ao Plano aprovado.'] }
+      docs.set(path, { ...doc, complementaryTranscription: { ...t, status: 'closed', revision: 2, closedAt: new Date(), closedBy: 'simulado', review: request.review } })
+      return ok(request.workPlanId, doc.revision as number)
     },
     async createComponent(request) {
       return component('create-component', request, null)

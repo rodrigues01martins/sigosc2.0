@@ -1154,10 +1154,8 @@ simultâneos colidem no mesmo documento.
 **Versões:** `create-version` copia metas e indicadores da base para a nova versão (mesmos IDs; `inheritedFrom`),
 na mesma transação. A comparação usa o ID lógico (mantido, alterado + campos, incluído, descontinuado, reativado).
 
-**Planos já finalizados sem componentes:** *bloqueio seguro* — 409 `complementary-transcription-pending`. Não se
-cria versão formal automaticamente, e a correção material (DEC-PT-002) não aceita componentes. Decisão
-administrativa necessária (proposta **DEC-PT-006**): admitir ou não a transcrição complementar de metas e
-indicadores em Plano já finalizado, com que registro e por quem.
+**Planos já finalizados sem componentes:** edição comum continua bloqueada (409 `complementary-transcription-pending`);
+a transcrição usa a incorporação complementar aprovada na **DEC-PT-006** (11.13). A correção material não aceita componentes.
 
 **Interface:** PAG-OSC05 — seção "Metas e indicadores previstos" da versão exibida (metas com seus indicadores,
 indicadores sem meta, descontinuados), cadastro e edição em formulário único quando autorizado, comparação entre
@@ -1180,6 +1178,75 @@ vínculo de indicadores a outros componentes; (5) lista de periodicidades e camp
    "Comparar com a anterior". Abrir "Monitoramento e Avaliação".
 5. Plano já finalizado sem metas: conferir a mensagem de bloqueio. Reversão: excluir os documentos de `goals`,
    `indicators` e os eventos criados.
+
+### 11.13 Consolidação de metas e indicadores (DEV-02.4-C01 — DEC-PT-006 a DEC-PT-010)
+
+**Decisões registradas**
+
+| Decisão | Alternativa | Efeito no sistema |
+| --- | --- | --- |
+| **DEC-PT-006** | A — incorporação complementar excepcional | Versão **vigente**, **finalizada** e **sem** metas/indicadores pode receber a transcrição deles por procedimento próprio (abrir → registrar → encerrar), sem alteração formal, sem nova versão e sem tocar a finalização original. |
+| **DEC-PT-007** | B — conferência obrigatória | Sem mínimo universal. A finalização regular (e o encerramento da incorporação) exige conferência explícita de metas e de indicadores, justificativa para "inexistentes"/"não aplicáveis", nenhuma pendência, vínculos íntegros, periodicidades resolvidas e declaração de correspondência. |
+| **DEC-PT-008** | A — vínculos flexíveis | Mantido: 0..n metas por indicador, na mesma versão; indicador compartilhado não é duplicado; descontinuação não deixa vínculo inconsistente. |
+| **DEC-PT-009** | A — periodicidade individual | Opções padronizadas + "Outra" (descrição) + **"Não se aplica" com justificativa** (≥ 10 caracteres). "Não informada" só durante o cadastramento; registros antigos não são convertidos. |
+| **DEC-PT-010** | A — complementares opcionais | Campos complementares continuam opcionais e contextualizados pela natureza; a troca de natureza mostra o que deixará de valer (nada é descartado em silêncio) e a auditoria registra os campos alterados. |
+
+**Quatro procedimentos distintos (não intercambiáveis):** cadastro em elaboração (edição comum); incorporação
+complementar (DEC-PT-006); correção material (DEC-PT-002, só campos gerais do Plano); alteração formal (nova versão).
+
+**Incorporação complementar — modelo (`workPlans/{id}.complementaryTranscription`)**
+
+| Campo | Conteúdo |
+| --- | --- |
+| `status` | ausente = não iniciada; `open` = em incorporação; `closed` = encerrada |
+| `revision` | 1 na abertura; 2 no encerramento (controle de concorrência) |
+| `openedAt/By`, `openRequestId`, `openDeclaration` | abertura (hora do servidor; declaração do usuário, `automatedVerification: false`) |
+| `closedAt/By`, `closeRequestId`, `review`, `counts`, `closeDeclaration` | encerramento com a conferência |
+
+Transições: *não iniciada* → `open` (abrir) → `closed` (encerrar). Não há reabertura nem encerramento automático;
+abandono mantém `open` para retomada por usuário autorizado. `finalizedAt/By`, `revision`, `origin`, `activation`,
+valores e eventos da finalização original **não são alterados**.
+
+**Contratos (`POST /api/osc-work-plans`, `work-plan.edit`)**
+
+| Ação | Payload (além de `oscId`, `partnershipId`, `requestId`) | Sucesso | Erros principais |
+| --- | --- | --- | --- |
+| `open-transcription` | `workPlanId`, `declaration` | 201 `opened`; reenvio 200 `opened:false` | 409 `not-finalized`, `transcription-not-current`, `pending-version-exists`, `components-exist`, `transcription-already-open`, `transcription-closed`; 422 `declaration-required`; 403 permissão/arquivada/suspensão comercial |
+| `close-transcription` | `workPlanId`, `expectedTranscriptionRevision`, `review`, `componentsToken`, `declaration` | 200 `closed`; reenvio 200 `closed:false` | 409 `transcription-not-open`, `transcription-closed`, `stale`, `components-changed`; 422 `review-pending` (lista), `declaration-required` |
+| `finalize` (**ampliado**) | `expectedRevision`, `confirm:true`, `review`, `componentsToken`, `declaration` | 200 (DEC-PT-003 a 005 preservadas) | 400 sem conferência; 409 `components-changed`; 422 `finalization-pending` (lista), `declaration-required` |
+
+`review = { goals: {status, justification}, indicators: {status, justification} }`, `status` ∈ `transcribed`,
+`none-in-document`, `not-applicable`, `pending`. `componentsToken` = impressão digital (IDs e revisões) dos componentes
+que o usuário conferiu; o servidor recalcula na **mesma transação** — alteração concorrente → 409, nada gravado.
+Metas/indicadores durante a incorporação usam `/api/osc-work-plan-components` sem mudança de contrato: a exceção
+vale só porque o **servidor** lê `complementaryTranscription.status = open`; nenhum campo da requisição a habilita.
+
+**Versionamento:** `create-version` recusa base com incorporação aberta (409 `transcription-open`); a cópia só
+ocorre com a incorporação encerrada (componentes definitivos). Finalizações anteriores **não** recebem conferência
+retroativa. Limites de 100 metas e 200 indicadores por versão são **técnicos** (cópia numa transação de até 500
+gravações), não administrativos; ampliar exigiria cópia em lotes com marcador de conclusão e testes de capacidade.
+
+**Auditoria (`workPlanEvents`)**: `complementary-transcription-opened` e `-closed` (declaração, conferência,
+contagens, impressão digital, revisão); componentes com `procedure: 'complementary-transcription'` ou
+`'registration'` e `periodicityNotApplicable` (justificativa); `components-reviewed` na finalização regular.
+
+**Firestore Rules:** nenhuma regra nova nesta etapa. As regras **da DEV-02.4** (leitura de `goals`/`indicators` com
+`work-plan.view`) continuam **pendentes de publicação** no `sigorsc-testes`. Antes de publicar: `firebase use`
+(ou `firebase projects:list`) para confirmar o projeto **sigorsc-testes**, depois
+`firebase deploy --only firestore:rules --project sigorsc-testes`. Nunca em produção.
+
+**Validação no Preview (Firebase de testes)**
+1. Publicar `firestore.rules` no `sigorsc-testes` (projeto conferido) e implantar as funções `/api/osc-work-plans`
+   e `/api/osc-work-plan-components`.
+2. **Finalização regular:** Plano em cadastramento → registrar (ou não) metas/indicadores → em "Conferência de metas
+   e indicadores", escolher a situação de cada categoria (justificar se inexistentes/não aplicáveis) → resolver
+   periodicidades → "Finalizar cadastro" → marcar a declaração → confirmar. Conferir `componentReview` e o evento
+   `components-reviewed`.
+3. **Incorporação:** Plano vigente finalizado sem metas → "Incorporar metas e indicadores do Plano aprovado" →
+   declaração → "Iniciar incorporação" → registrar metas e indicadores (pode sair e retomar) → conferência +
+   declaração → "Encerrar incorporação". Conferir `complementaryTranscription` e que `finalizedAt` não mudou.
+4. Com a incorporação aberta, conferir que "Registrar alteração formal" não é oferecido.
+5. Reversão: excluir componentes, o campo `complementaryTranscription`/`componentReview` criados e os eventos.
 
 ## 12. Publicação na Vercel
 
@@ -1216,7 +1283,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Ativação automática na finalização e vigência cadastral (DEV-02.3-C01; DEC-PT-003/004/005) | Implementado; validado em emuladores; **não validado no Preview** |
 | Regularização de versões legadas finalizadas sem ativação | **Bloqueada** (aguarda decisão administrativa específica) |
 | Metas, indicadores e resultados previstos por versão (DEV-02.4; PAG-OSC05 e consulta na PAG-OSC08) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
-| Transcrição de metas/indicadores em Plano já finalizado sem componentes | **Bloqueada** (aguarda decisão administrativa DEC-PT-006) |
+| Incorporação complementar (DEC-PT-006), conferência na finalização (DEC-PT-007), periodicidade justificada (DEC-PT-009) | Implementado (DEV-02.4-C01); validado em emuladores; **não validado no Preview** |
 | Apuração, avaliação, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 

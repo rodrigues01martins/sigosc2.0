@@ -7,10 +7,13 @@ import {
   MEASUREMENT_TYPES,
   NATURES,
   PERIODICITIES,
+  REVIEW_STATUSES,
   RULE_METHODS,
   label,
   periodicityLabel,
+  type ComponentReview,
   type GoalData,
+  type ReviewStatus,
   type IndicatorData,
   type NumberValue,
   type TextValue,
@@ -108,8 +111,10 @@ export interface IndicatorForm {
   target: Optional
   unit: Optional
   expectedParameter: Optional
+  /** '' = não informada; 'not-applicable' = não se aplica (DEC-PT-009, com justificativa). */
   periodicityKind: string
   periodicityDescription: string
+  periodicityJustification: string
   ruleMethod: string
   ruleDescription: string
   numerator: string
@@ -136,6 +141,7 @@ export function indicatorFormFrom(data: IndicatorData | null, suggestedCode: str
       expectedParameter: empty,
       periodicityKind: '',
       periodicityDescription: '',
+      periodicityJustification: '',
       ruleMethod: 'described',
       ruleDescription: '',
       numerator: '',
@@ -156,8 +162,9 @@ export function indicatorFormFrom(data: IndicatorData | null, suggestedCode: str
     target: optional(data.target),
     unit: optional(data.unit),
     expectedParameter: optional(data.expectedParameter),
-    periodicityKind: data.periodicity.state === 'informed' ? data.periodicity.value.kind : '',
+    periodicityKind: data.periodicity.state === 'informed' ? data.periodicity.value.kind : data.periodicity.state === 'not-applicable' ? 'not-applicable' : '',
     periodicityDescription: data.periodicity.state === 'informed' ? (data.periodicity.value.description ?? '') : '',
+    periodicityJustification: data.periodicity.state === 'not-applicable' ? data.periodicity.justification : '',
     ruleMethod: data.rule.method,
     ruleDescription: data.rule.description,
     numerator: data.rule.numerator ?? '',
@@ -185,7 +192,12 @@ export function indicatorFromForm(f: IndicatorForm, order: number): Record<strin
     nature: f.nature || undefined,
     measurementType: quantitative ? f.measurementType || undefined : null,
     unit: quantitative ? toText(f.unit) : { state: 'not-informed' },
-    periodicity: f.periodicityKind ? { state: 'informed', value: { kind: f.periodicityKind, description: f.periodicityKind === 'other' ? f.periodicityDescription : null } } : { state: 'not-informed' },
+    periodicity:
+      f.periodicityKind === 'not-applicable'
+        ? { state: 'not-applicable', justification: f.periodicityJustification }
+        : f.periodicityKind
+          ? { state: 'informed', value: { kind: f.periodicityKind, description: f.periodicityKind === 'other' ? f.periodicityDescription : null } }
+          : { state: 'not-informed' },
     target,
     expectedParameter: toText(f.expectedParameter),
     rule: { method, description: f.ruleDescription, numerator: method === 'ratio' ? f.numerator : null, denominator: method === 'ratio' ? f.denominator : null, multiplier },
@@ -229,3 +241,18 @@ export function ruleSummary(d: IndicatorData): string {
   else if (r.method !== 'described') parts.push(`${methodLabel(r.method)}${r.multiplier !== null ? ` × ${formatNumber(r.multiplier)}` : ''}`)
   return parts.join(' — ')
 }
+
+// ---------------------------------------------------------------------------- conferência (DEC-PT-007)
+
+export interface ReviewDraft {
+  goals: { status: ReviewStatus | ''; justification: string }
+  indicators: { status: ReviewStatus | ''; justification: string }
+}
+export const emptyReview = (): ReviewDraft => ({ goals: { status: '', justification: '' }, indicators: { status: '', justification: '' } })
+
+/** Rascunho → conferência enviada. Categoria sem escolha = PENDENTE (nunca presumida). */
+export function reviewFromDraft(d: ReviewDraft): ComponentReview {
+  const c = (x: ReviewDraft['goals']) => ({ status: x.status || 'pending', justification: x.status === 'none-in-document' || x.status === 'not-applicable' ? x.justification.trim() || null : null }) as const
+  return { goals: c(d.goals), indicators: c(d.indicators) }
+}
+export { REVIEW_STATUSES }

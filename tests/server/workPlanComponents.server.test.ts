@@ -15,6 +15,8 @@ import { MEMBERS, OSCS, USERS, memberDocument, memberPath, oscDocument, oscPath 
 import { PARTNERSHIPS, partnershipDocument, partnershipPath } from '../support/partnershipFixtures.ts'
 import { PERMISSION_MEMBERS, PERMISSION_USERS } from '../support/permissionFixtures.ts'
 import { goalData, indicatorData } from '../support/workPlanFixtures.ts'
+import { REVIEW_NONE, REVIEW_TRANSCRIBED, reviewed } from '../support/reviewFixtures.ts'
+import { componentsToken } from '../../src/domain/workPlanComponents.ts'
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'demo-sigosc-server'
 process.env.GCLOUD_PROJECT = PROJECT_ID
@@ -114,7 +116,14 @@ async function draftOriginal(partnershipId = RUNNING) {
   status(await call(OP, 'POST', { oscId: ALFA, partnershipId, requestId: nextRequest(), action: 'start' }), 201)
   status(await call(OP, 'PATCH', { oscId: ALFA, partnershipId, requestId: nextRequest(), expectedRevision: 1, changes: REQUIRED }), 200)
 }
-const finalize = (workPlanId: string, expectedRevision: number) => call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId: nextRequest(), action: 'finalize', expectedRevision, confirm: true })
+/** Finalização com a conferência coerente com os componentes REAIS da versão (DEC-PT-007). */
+const tokenOf = async (workPlanId: string) =>
+  componentsToken([...(await componentsOf(workPlanId)).map((c) => ({ kind: 'goal' as const, id: c.id, revision: c.revision })), ...(await componentsOf(workPlanId, 'indicators')).map((c) => ({ kind: 'indicator' as const, id: c.id, revision: c.revision }))])
+async function finalize(workPlanId: string, expectedRevision: number, review: unknown = null) {
+  const token = await tokenOf(workPlanId)
+  const auto = review ?? (token.startsWith('0-') ? REVIEW_NONE : REVIEW_TRANSCRIBED)
+  return call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId: nextRequest(), action: 'finalize', expectedRevision, confirm: true, ...reviewed(auto, token) })
+}
 
 describe('Cadastro de metas e indicadores (versão em cadastramento)', () => {
   test('DEV-02.4-T02/T03/T04/T07/T08/T22 — meta e indicador gravados pelo servidor, vinculados e associados à versão', async () => {

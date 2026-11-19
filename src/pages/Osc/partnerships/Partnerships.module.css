@@ -475,3 +475,12 @@
   color: var(--ds-feedback-warning-fg);
   border-color: var(--ds-feedback-warning-fg);
 }
+
+/* DEV-02.4-C01: rótulo longo de ação que quebra linha em telas estreitas (sem rolagem horizontal). */
+.wrapButton {
+  white-space: normal;
+  text-align: left;
+  max-width: 100%;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}

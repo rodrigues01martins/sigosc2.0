@@ -50,7 +50,16 @@ export const PERIODICITIES = [
   { id: 'other', label: 'Outra (descrever)' },
 ] as const
 export type PeriodicityKind = (typeof PERIODICITIES)[number]['id']
-export type Periodicity = { readonly state: 'informed'; readonly value: { readonly kind: PeriodicityKind; readonly description: string | null } } | { readonly state: 'not-informed' }
+/**
+ * DEC-PT-009: informada; não informada (permitido só durante o cadastramento); ou NÃO APLICÁVEL com
+ * justificativa obrigatória — nunca confundida com ausência de preenchimento.
+ */
+export type Periodicity =
+  | { readonly state: 'informed'; readonly value: { readonly kind: PeriodicityKind; readonly description: string | null } }
+  | { readonly state: 'not-informed' }
+  | { readonly state: 'not-applicable'; readonly justification: string }
+
+export const PERIODICITY_JUSTIFICATION_MIN = 10
 
 /** Método de mensuração (DEC-042, título). Componentes guardados; cálculo NÃO habilitado. */
 export const RULE_METHODS = [
@@ -138,7 +147,7 @@ export const isComponentId = (v: unknown): v is string => typeof v === 'string' 
 // Validação (servidor e interface usam a mesma)
 // ---------------------------------------------------------------------------
 
-export type ComponentErrorCode = 'required' | 'invalid' | 'too-long' | 'out-of-range' | 'duplicate-code' | 'unknown-goal' | 'not-applicable-not-allowed' | 'too-many' | 'linked-indicators' | 'discontinued-goal'
+export type ComponentErrorCode = 'required' | 'invalid' | 'too-long' | 'out-of-range' | 'duplicate-code' | 'unknown-goal' | 'not-applicable-not-allowed' | 'too-many' | 'linked-indicators' | 'discontinued-goal' | 'justification-required'
 export type ComponentErrors = Partial<Record<string, ComponentErrorCode>>
 
 // eslint-disable-next-line no-control-regex -- recusa intencional de caracteres de controle
@@ -183,6 +192,13 @@ function periodicity(raw: unknown): { value: Periodicity | null; error: Componen
   if (raw === undefined) return { value: NOT_INFORMED, error: null }
   if (!isObject(raw)) return { value: null, error: 'invalid' }
   if (raw.state === 'not-informed' && Object.keys(raw).length === 1) return { value: NOT_INFORMED, error: null }
+  if (raw.state === 'not-applicable') {
+    if (Object.keys(raw).some((k) => k !== 'state' && k !== 'justification')) return { value: null, error: 'invalid' }
+    const j = text(raw.justification, LIMITS.longText, { required: true, multiline: true })
+    if (j.error) return { value: null, error: j.error === 'required' ? 'justification-required' : j.error }
+    if ((j.value as string).length < PERIODICITY_JUSTIFICATION_MIN) return { value: null, error: 'justification-required' }
+    return { value: { state: 'not-applicable', justification: j.value as string }, error: null }
+  }
   if (raw.state !== 'informed' || !isObject(raw.value) || Object.keys(raw).length !== 2) return { value: null, error: 'invalid' }
   const { kind, description } = raw.value
   if (!PERIODICITIES.some((p) => p.id === kind) || Object.keys(raw.value).some((k) => k !== 'kind' && k !== 'description')) return { value: null, error: 'invalid' }
@@ -356,6 +372,7 @@ export const COMPONENT_ERROR_MESSAGE: Record<ComponentErrorCode, string> = {
   'too-many': 'Quantidade acima do limite.',
   'linked-indicators': 'Há indicadores ativos vinculados a esta meta. Desvincule-os ou descontinue-os antes de descontinuar a meta.',
   'discontinued-goal': 'Não vincule indicador ativo a meta descontinuada.',
+  'justification-required': 'Informe a justificativa (mínimo de 10 caracteres).',
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +451,117 @@ export const INDICATOR_FIELD_LABEL: Record<keyof IndicatorData, string> = {
 export const label = <T extends { id: string; label: string }>(list: readonly T[], id: string | null | undefined): string => list.find((x) => x.id === id)?.label ?? '—'
 
 export function periodicityLabel(p: Periodicity): string {
+  if (p.state === 'not-applicable') return `Não se aplica — ${p.justification}`
   if (p.state !== 'informed') return 'Não informada'
   return p.value.kind === 'other' ? (p.value.description ?? 'Outra') : label(PERIODICITIES, p.value.kind)
+}
+
+// ---------------------------------------------------------------------------
+// DEC-PT-007 — Conferência de metas e indicadores (finalização e encerramento da incorporação)
+// ---------------------------------------------------------------------------
+
+/**
+ * Situação DECLARADA de cada categoria (metas; indicadores). A ausência de registros nunca é
+ * interpretada automaticamente como inexistência ou inaplicabilidade: a escolha é explícita.
+ */
+export const REVIEW_STATUSES = [
+  { id: 'transcribed', label: 'Transcritos conforme o Plano aprovado' },
+  { id: 'none-in-document', label: 'Inexistentes no Plano aprovado' },
+  { id: 'not-applicable', label: 'Não aplicáveis a esta parceria' },
+  { id: 'pending', label: 'Ainda pendentes de transcrição' },
+] as const
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number]['id']
+export interface ReviewCategory {
+  readonly status: ReviewStatus
+  readonly justification: string | null
+}
+export interface ComponentReview {
+  readonly goals: ReviewCategory
+  readonly indicators: ReviewCategory
+}
+export const REVIEW_JUSTIFICATION_MIN = 10
+
+/** Declaração de correspondência exigida na finalização regular e no encerramento da incorporação. */
+export const COMPONENTS_DECLARATION =
+  'Declaro que as metas e os indicadores registrados correspondem ao Plano de Trabalho formalmente aprovado, conforme a conferência acima.'
+
+/** DEC-PT-006: declaração de abertura da incorporação complementar. */
+export const TRANSCRIPTION_DECLARATION =
+  'Declaro que as metas e os indicadores que serão incorporados correspondem ao Plano de Trabalho formalmente aprovado e que esta operação se limita à transcrição de informações preexistentes, sem alteração formal de seu conteúdo.'
+
+/** Lê a conferência enviada (formato estrito); `null` = malformada. */
+export function parseReview(raw: unknown): ComponentReview | null {
+  if (!isObject(raw) || Object.keys(raw).length !== 2) return null
+  const category = (c: unknown): ReviewCategory | null => {
+    if (!isObject(c) || Object.keys(c).some((k) => k !== 'status' && k !== 'justification')) return null
+    if (!REVIEW_STATUSES.some((s) => s.id === c.status)) return null
+    if (c.justification !== undefined && c.justification !== null && typeof c.justification !== 'string') return null
+    const j = typeof c.justification === 'string' ? c.justification.trim() : ''
+    if (j.length > LIMITS.longText || CONTROL.test(j.replace(/[\n\r\t]/g, ' '))) return null
+    return { status: c.status as ReviewStatus, justification: j || null }
+  }
+  const goals = category(raw.goals)
+  const indicators = category(raw.indicators)
+  return goals && indicators ? { goals, indicators } : null
+}
+
+/**
+ * Conferência obrigatória (DEC-PT-007 + DEC-PT-009 + DEC-PT-008), avaliada no SERVIDOR sobre os
+ * componentes relidos na transação. Sem mínimo universal: "inexistentes"/"não aplicáveis" são
+ * aceitos com justificativa e sem componentes ativos da categoria.
+ */
+export function checkComponentReview(review: ComponentReview, goals: readonly Stored<GoalData>[], indicators: readonly Stored<IndicatorData>[]): readonly string[] {
+  const pending: string[] = []
+  const category = (name: 'Metas' | 'Indicadores', c: ReviewCategory, active: number) => {
+    if (c.status === 'pending') pending.push(`${name}: há componentes pendentes de transcrição.`)
+    else if (c.status === 'transcribed') {
+      if (active === 0) pending.push(`${name}: declaradas como transcritas, mas não há componentes ativos registrados.`)
+    } else {
+      if (active > 0) pending.push(`${name}: há componentes ativos registrados; a categoria não pode ser declarada inexistente ou não aplicável.`)
+      if ((c.justification ?? '').length < REVIEW_JUSTIFICATION_MIN) pending.push(`${name}: informe a justificativa (mínimo de ${REVIEW_JUSTIFICATION_MIN} caracteres).`)
+    }
+  }
+  const activeIndicators = indicators.filter((i) => i.data.status === 'active')
+  category('Metas', review.goals, goals.filter((g) => g.data.status === 'active').length)
+  category('Indicadores', review.indicators, activeIndicators.length)
+  const unresolved = activeIndicators.filter((i) => i.data.periodicity.state === 'not-informed')
+  if (unresolved.length) pending.push(`Periodicidade pendente: ${unresolved.map((i) => i.data.code).join(', ')} (informe a periodicidade ou justifique a inaplicabilidade).`)
+  const integrity = linkIntegrity(goals, indicators)
+  if (!integrity.ok) pending.push('Há indicador ativo vinculado a meta descontinuada.')
+  return pending
+}
+
+/**
+ * Impressão digital do conjunto conferido (IDs e revisões de metas e indicadores, FNV-1a 32 bits).
+ * O navegador envia a que viu; o servidor recalcula na transação: alteração concorrente → 409.
+ */
+export function componentsToken(components: readonly { readonly kind: ComponentKind; readonly id: string; readonly revision: number }[]): string {
+  const key = components
+    .map((c) => `${c.kind}:${c.id}:${c.revision}`)
+    .sort()
+    .join('|')
+  let hash = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${components.length}-${hash.toString(16).padStart(8, '0')}`
+}
+export const COMPONENTS_TOKEN_PATTERN = /^\d{1,4}-[0-9a-f]{8}$/
+
+// ---------------------------------------------------------------------------
+// DEC-PT-010 — impacto da troca de natureza (nada é descartado em silêncio)
+// ---------------------------------------------------------------------------
+
+/** Campos INFORMADOS que deixarão de valer se o componente passar a ser qualitativo. */
+export function qualitativeImpact(kind: ComponentKind, data: { readonly unit?: TextValue; readonly expectedQuantity?: NumberValue; readonly target?: NumberValue; readonly measurementType?: string | null; readonly rule?: MeasurementRule }): readonly string[] {
+  const lost: string[] = []
+  if (data.unit?.state === 'informed') lost.push('Unidade de medida')
+  if (kind === 'goal' && data.expectedQuantity?.state === 'informed') lost.push('Quantidade prevista')
+  if (kind === 'indicator') {
+    if (data.target?.state === 'informed') lost.push('Resultado previsto (valor-alvo)')
+    if (data.measurementType) lost.push('Tipo de resultado numérico')
+    if (data.rule && data.rule.method !== 'described') lost.push('Método, numerador, denominador e multiplicador da fórmula')
+  }
+  return lost
 }

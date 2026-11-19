@@ -35,6 +35,21 @@ function openPlan(options: RenderOptions = {}, partnershipId = RUNNING, user: Pa
   return renderOscApp(user, options)
 }
 const fill = (label: RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
+/** DEC-PT-007: conferência explícita — escolhe a situação de metas e de indicadores (com justificativa quando exigida). */
+async function confer(goals = 'Inexistentes no Plano aprovado', indicators = goals) {
+  const groups = await screen.findAllByRole('group', { name: /^(Metas|Indicadores) do Plano aprovado/ })
+  groups.forEach((g, n) => {
+    const choice = n === 0 ? goals : indicators
+    fireEvent.click(within(g).getByRole('radio', { name: choice }))
+    const j = within(g).queryByLabelText(/Justificativa/)
+    if (j) fireEvent.change(j, { target: { value: 'O Plano aprovado não contém este componente.' } })
+  })
+}
+/** Declaração de correspondência na confirmação e envio. */
+function declareAndConfirm(dialog: HTMLElement) {
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Declaro que as metas e os indicadores registrados/ }))
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Finalizar cadastro' }))
+}
 
 describe('Consulta e situação do cadastro', () => {
   it('DEV-02.2-T01/T03 — Plano não estruturado: orientação; dados da parceria como fonte autoritativa', async () => {
@@ -150,23 +165,26 @@ describe('Finalização interna', () => {
   it('DEV-02.2-T18 — pendências bloqueiam; confirmação proporcional; finaliza e preserva (T19)', async () => {
     const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [{ oscId: ALFA, partnershipId: RUNNING }] })
     await screen.findByRole('heading', { name: 'Conferência para finalização interna' })
-    expect(within(screen.getByRole('list', { name: 'Pendências' })).getAllByRole('listitem')).toHaveLength(3)
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Pendências' })).getAllByRole('listitem')).toHaveLength(5)) // 3 do Plano + conferência de metas e de indicadores
     expect((screen.getByRole('button', { name: 'Finalizar cadastro' }) as HTMLButtonElement).disabled).toBe(true)
     fill(/Data da aprovação pelo órgão público/, '2026-02-10')
     fill(/Início do período de execução/, '2026-03-01')
     fill(/Término do período de execução/, '2028-02-28')
     expect(screen.getByText('Salve as alterações antes de finalizar.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Salvar alterações' }))
+    await screen.findByText('Alterações salvas e confirmadas pelo servidor.')
+    await confer()
     await screen.findByText('Os requisitos para a finalização estão atendidos.')
     await waitFor(() => expect((screen.getByRole('button', { name: 'Finalizar cadastro' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Finalizar cadastro' }))
     const dialog = screen.getByRole('alertdialog', { name: 'Confirmar finalização interna' })
     expect(dialog.textContent).toMatch(/será preservado.*não representa aprovação jurídica/)
+    expect((within(dialog).getByRole('button', { name: 'Finalizar cadastro' }) as HTMLButtonElement).disabled).toBe(true) // declaração obrigatória
     expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(0) // nada antes da confirmação
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Finalizar cadastro' }))
+    declareAndConfirm(dialog)
     expect((await screen.findByText(/Cadastro finalizado internamente e preservado/)).getAttribute('role')).toBe('status')
     await screen.findByText('Cadastro no SIGOSC: Estruturado e finalizado internamente')
-    expect(workPlans.calls.find((c) => c.kind === 'finalize')?.request).toMatchObject({ expectedRevision: 2 })
+    expect(workPlans.calls.find((c) => c.kind === 'finalize')?.request).toMatchObject({ expectedRevision: 2, declaration: true, review: { goals: { status: 'none-in-document' }, indicators: { status: 'none-in-document' } } })
     // T19/T20: sem edição nem nova finalização após finalizar.
     expect(screen.queryByRole('button', { name: 'Salvar alterações' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Finalizar cadastro' })).toBeNull()
@@ -424,7 +442,9 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
     const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...ORIGINAL, status: 'in-registration', sequence: 2, revision: 1 }] })
     expect(await screen.findByRole('heading', { name: 'Versão 2' })).toBeTruthy()
     // T08: ato gravado (com autoria do servidor) válido → requisitos de finalização atendidos.
-    expect(screen.getByText('Os requisitos para a finalização estão atendidos.')).toBeTruthy()
+    expect(screen.queryByText(/Ato formal: tipo e data/)).toBeNull()
+    await confer()
+    expect(await screen.findByText('Os requisitos para a finalização estão atendidos.')).toBeTruthy()
     fireEvent.change(screen.getByRole('textbox', { name: /^Público atendido/ }), { target: { value: 'Crianças e adolescentes' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salvar alterações' }))
     await screen.findByText('Alterações salvas e confirmadas pelo servidor.')
@@ -483,11 +503,13 @@ describe('Ativação e vigência cadastral (DEV-02.3-C01)', () => {
     await screen.findByRole('heading', { name: 'Versão 2' })
     expect(screen.getByText(/Ao ser finalizada, passará a ser a vigente no SIGOSC/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Ativar|Tornar vigente/ })).toBeNull() // T08
+    await confer()
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Finalizar cadastro' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Finalizar cadastro' }))
     const dialog = screen.getByRole('alertdialog', { name: 'Confirmar finalização interna' })
     expect(dialog.textContent).toMatch(/passará a ser a vigente no SIGOSC.*versão original ficará registrada como substituída.*não representa aprovação jurídica/)
     expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(0) // T07
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Finalizar cadastro' }))
+    declareAndConfirm(dialog)
     const done = await screen.findByText(/Cadastro finalizado e Versão 2 ativada como vigente no SIGOSC; a versão original passa a constar como substituída/)
     expect(done.textContent).toMatch(/Não representa aprovação jurídica/) // T19
     expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(1)
@@ -618,10 +640,11 @@ describe('Metas e indicadores previstos (DEV-02.4)', () => {
     expect(await screen.findByText(/alterado por outra pessoa; os dados foram recarregados/)).toBeTruthy()
   })
 
-  it('Bloqueio seguro — Plano finalizado sem componentes: transcrição complementar aguarda decisão; sem botões', async () => {
+  it('Plano finalizado sem componentes: edição comum continua bloqueada; incorporação é o procedimento próprio', async () => {
     openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, status: 'finalized' }] })
-    expect(await screen.findByText(/A transcrição complementar em Plano finalizado depende de decisão administrativa/)).toBeTruthy()
+    expect(await screen.findByText(/use "Incorporar metas e indicadores do Plano aprovado"/)).toBeTruthy()
     expect(within(section()).queryByRole('button', { name: /Adicionar/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })).toBeTruthy()
   })
 
   it('DEV-02.4-T16 — somente consulta sem work-plan.edit', async () => {
@@ -673,5 +696,110 @@ describe('Monitoramento e Avaliação — PAG-OSC08 (DEV-02.4)', () => {
     window.location.hash = `#/parcerias/${RUNNING}/indicadores`
     renderOscApp(OP, { prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...plan, status: 'in-registration' }] })
     expect(await screen.findByText(/Não há indicadores: o Plano de Trabalho aprovado ainda não foi registrado e finalizado/)).toBeTruthy()
+  })
+})
+
+describe('Consolidação de metas e indicadores (DEV-02.4-C01)', () => {
+  const G1 = 'g_000000000000000000c1'
+  const section = () => screen.getByRole('region', { name: 'Metas e indicadores previstos' })
+  const DRAFT = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }
+  const FINAL = { ...DRAFT, status: 'finalized' as const, revision: 3 }
+
+  it('C01-T01/T02/T04/T06/T07/T12/T13/T14 — incorporação complementar: abrir com declaração, transcrever, conferir e encerrar', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [FINAL] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })) // T01
+    expect(screen.getByText(/não altera juridicamente o Plano e não cria versão formal/)).toBeTruthy()
+    const start = screen.getByRole('button', { name: 'Iniciar incorporação' })
+    expect((start as HTMLButtonElement).disabled).toBe(true) // T04: declaração obrigatória
+    fireEvent.click(screen.getByRole('checkbox', { name: /Declaro que as metas e os indicadores que serão incorporados/ }))
+    fireEvent.click(start)
+    await screen.findByRole('heading', { name: 'Incorporação complementar em andamento' })
+    expect(workPlans.calls.find((c) => c.kind === 'open-transcription')?.request).toMatchObject({ workPlanId: 'original', declaration: true })
+    expect(screen.getByText('Cadastro no SIGOSC: Estruturado e finalizado internamente')).toBeTruthy() // T05: continua finalizado
+    // T06/T07: componentes durante a incorporação.
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar meta' }))
+    fill(/Descrição da meta/, 'Atender 200 participantes')
+    fireEvent.click(screen.getByRole('radio', { name: 'Quantitativa' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar meta' })).getByRole('button', { name: 'Adicionar meta' }))
+    await screen.findByText('Meta Meta 01 registrada e confirmada pelo servidor.')
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar indicador à meta Meta 01' }))
+    const form = screen.getByRole('region', { name: 'Adicionar indicador' })
+    fill(/Nome do indicador/, 'Oficinas realizadas')
+    fireEvent.click(within(form).getByRole('radio', { name: 'Quantitativa' }))
+    fireEvent.change(within(form).getByLabelText(/Tipo de resultado numérico/), { target: { value: 'quantity' } })
+    fireEvent.change(within(form).getByLabelText(/Fórmula, como consta do Plano/), { target: { value: 'soma das oficinas realizadas' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar indicador' }))
+    await screen.findByText('Indicador IND-01 registrado e confirmado pelo servidor.')
+    // Encerramento: conferência + periodicidade pendente bloqueia (DEC-PT-009).
+    await screen.findByText('1 meta · 1 indicador')
+    await confer('Transcritos conforme o Plano aprovado')
+    const panel = screen.getByRole('region', { name: 'Incorporação complementar em andamento' })
+    expect(within(panel).getByText(/Periodicidade pendente: IND-01/)).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /Declaro que as metas e os indicadores registrados/ }))
+    expect((within(panel).getByRole('button', { name: 'Encerrar incorporação' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Editar indicador IND-01' }))
+    fireEvent.change(screen.getByLabelText(/Periodicidade do indicador/), { target: { value: 'not-applicable' } })
+    fireEvent.change(screen.getByLabelText(/Justificativa da inaplicabilidade/), { target: { value: 'Indicador apurado uma única vez no encerramento.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar indicador' }))
+    await screen.findByText('Indicador IND-01 atualizado e confirmado pelo servidor.')
+    await waitFor(() => expect(within(panel).queryByText(/Periodicidade pendente/)).toBeNull())
+    fireEvent.click(within(panel).getByRole('button', { name: 'Encerrar incorporação' }))
+    expect(await screen.findByText(/Incorporação complementar encerrada. Metas e indicadores preservados; nenhuma versão formal foi criada/)).toBeTruthy()
+    expect(workPlans.calls.find((c) => c.kind === 'close-transcription')?.request).toMatchObject({ declaration: true, review: { goals: { status: 'transcribed' }, indicators: { status: 'transcribed' } } })
+    await screen.findByText(/Incorporação complementar de metas e indicadores encerrada em/)
+    expect(within(section()).queryByRole('button')).toBeNull() // T13
+    expect(within(screen.getByRole('list', { name: 'Versões em ordem cronológica' })).getAllByRole('listitem')).toHaveLength(1) // T14
+  })
+
+  it('C01-T08 — incorporação em andamento é retomada com os componentes já salvos', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, transcription: { status: 'open' }, goals: [{ id: G1, data: goalData('Meta 01') }] }] })
+    await screen.findByRole('heading', { name: 'Incorporação complementar em andamento' })
+    expect(await screen.findByText('1 meta · 0 indicadores')).toBeTruthy()
+    // 3.7: nova alteração formal indisponível enquanto a incorporação estiver aberta (sem botão inoperante).
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+    expect(screen.getByText(/Há incorporação complementar de metas e indicadores em andamento/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Editar meta Meta 01' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })).toBeNull() // T09
+  })
+
+  it('C01-T10/T11/T03 — sem incorporação: versão substituída, versão já estruturada ou sem work-plan.edit', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, activation: 'superseded' }, { ...FINAL, sequence: 2, revision: 2 }] })
+    await screen.findByRole('heading', { name: 'Versão 2' })
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
+    await screen.findByRole('heading', { name: 'Versão original' })
+    expect(screen.queryByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })).toBeNull() // T10
+    cleanup()
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, goals: [{ id: G1, data: goalData('Meta 01') }] }] })
+    await screen.findByText('1 meta · 0 indicadores')
+    expect(screen.queryByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })).toBeNull() // T11
+    cleanup()
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [FINAL] })
+    await screen.findByRole('heading', { name: 'Metas e indicadores previstos' })
+    expect(screen.queryByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })).toBeNull() // T03
+  })
+
+  it('C01-T15/T17/T18/T19/T27 — conferência na finalização: sem mínimo universal; justificativa; pendências bloqueiam', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, goals: [{ id: G1, data: goalData('Meta 01') }], indicators: [{ id: 'i_000000000000000000c1', data: indicatorData('IND-01', [G1], { periodicity: { state: 'not-informed' } }) }] }] })
+    await screen.findByText('1 meta · 1 indicador')
+    const pend = () => within(screen.getByRole('list', { name: 'Pendências' })).getAllByRole('listitem').map((li) => li.textContent).join(' ')
+    expect(pend()).toMatch(/Metas: há componentes pendentes de transcrição.*Indicadores: há componentes pendentes.*Periodicidade pendente: IND-01/) // T15/T18/T27
+    await confer('Inexistentes no Plano aprovado', 'Transcritos conforme o Plano aprovado')
+    expect(pend()).toMatch(/Metas: há componentes ativos registrados; a categoria não pode ser declarada inexistente/) // T17
+    await confer('Transcritos conforme o Plano aprovado')
+    expect(pend()).toMatch(/^Periodicidade pendente: IND-01/)
+    expect((screen.getByRole('button', { name: 'Finalizar cadastro' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(0)
+  })
+
+  it('C01-T26/T28 — periodicidade "não se aplica" exige justificativa; troca de natureza informa o impacto', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, goals: [{ id: G1, data: goalData('Meta 01') }], indicators: [{ id: 'i_000000000000000000c1', data: indicatorData('IND-01', [G1]) }] }] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar indicador IND-01' }))
+    fireEvent.change(screen.getByLabelText(/Periodicidade do indicador/), { target: { value: 'not-applicable' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar indicador' }))
+    expect(await screen.findByText('Informe a justificativa (mínimo de 10 caracteres).')).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: 'Qualitativa' }))
+    expect(screen.getByText(/Ao salvar como qualitativo, deixarão de valer: Tipo de resultado numérico; Resultado previsto \(valor-alvo\); Unidade de medida; Método/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: 'Quantitativa' }))
+    expect((screen.getByLabelText(/Resultado previsto \(valor-alvo\)/) as HTMLInputElement).value).toBe('80') // nada descartado em silêncio
   })
 })
