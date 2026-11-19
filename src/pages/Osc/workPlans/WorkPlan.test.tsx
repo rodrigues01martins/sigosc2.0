@@ -410,13 +410,13 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
     const items = within(versionsList()).getAllByRole('listitem')
     expect(items).toHaveLength(2)
     expect(items[0]?.textContent).toMatch(/Versão original.*Vigente no SIGOSC/)
-    expect(items[1]?.textContent).toMatch(/Versão 2.*Vigência não definida: aguarda decisão administrativa.*Em cadastramento/)
+    expect(items[1]?.textContent).toMatch(/Versão 2.*Em cadastramento: ainda não vigente.*Cadastro: Em cadastramento/)
     // Cópia integral editável; a original continua finalizada e preservada.
     expect((screen.getByRole('textbox', { name: /^Público atendido/ }) as HTMLTextAreaElement).value).toBe('Crianças')
     expect(workPlans.docs.get(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/original`)).toMatchObject({ registrationStatus: 'finalized', revision: 3 })
     // Só uma versão pendente: nova alteração formal indisponível, com o motivo.
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
-    expect(screen.getByText(/Já existe uma versão posterior registrada cuja vigência aguarda decisão administrativa/)).toBeTruthy()
+    expect(screen.getByText(/Já existe uma versão em cadastramento. Finalize-a/)).toBeTruthy()
   })
 
   it('DEV-02.3-T05/T09 — editar a nova versão não altera a original; dados do ato editáveis em cadastramento', async () => {
@@ -441,9 +441,7 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
       prepare: withPermissions(['partnerships.view', 'work-plan.view']),
       workPlans: [ORIGINAL, { ...ORIGINAL, sequence: 2, revision: 2, values: { ...REQUIRED, targetAudience: informed('Crianças e adolescentes'), executionMethod: informed('Oficinas') } }],
     })
-    // Versão posterior finalizada sem ativação: a original continua sendo exibida como vigente.
-    expect(await screen.findByRole('heading', { name: 'Versão original' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão 2' }))
+    // DEC-PT-003: versão posterior finalizada é a vigente e é exibida por padrão.
     expect(await screen.findByRole('heading', { name: 'Versão 2' })).toBeTruthy()
     expect(screen.getByText('Crianças e adolescentes')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
@@ -463,16 +461,77 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
     expect(screen.queryByRole('table', { name: /Diferenças entre/ })).toBeNull()
   })
 
-  it('DEV-02.3-T20 / bloqueio seguro — arquivada: sem nova versão; versão finalizada não oferece ativação', async () => {
+  it('DEV-02.3-T20 — arquivada: sem nova versão nem finalização', async () => {
     openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...ORIGINAL, partnershipId: 'pAlfaCooperacao01xx' }] }, 'pAlfaCooperacao01xx')
     await screen.findByRole('heading', { name: 'Versões do Plano de Trabalho' })
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
-    cleanup()
-    openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...ORIGINAL, sequence: 2, revision: 2 }] })
-    fireEvent.click(await screen.findByRole('button', { name: 'Consultar: Versão 2' }))
+  })
+})
+
+describe('Ativação e vigência cadastral (DEV-02.3-C01)', () => {
+  const ORIGINAL = { oscId: ALFA, partnershipId: RUNNING, values: { ...REQUIRED, targetAudience: informed('Crianças') }, status: 'finalized' as const, revision: 3 }
+  const V2 = { ...ORIGINAL, sequence: 2, revision: 1, values: { ...REQUIRED, targetAudience: informed('Crianças e adolescentes') } }
+  const activeChain = (effectiveDate: string | null) => [
+    { ...ORIGINAL, activation: 'superseded' },
+    { ...V2, status: 'finalized' as const, revision: 2, formalAct: { effectiveDate } },
+  ]
+  const versionsList = () => screen.getByRole('list', { name: 'Versões em ordem cronológica' })
+
+  it('C01-T01/T02/T07/T08/T11/T19/T21 — finalizar v2 a ativa com uma única confirmação; original substituída; próxima alteração liberada', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...V2, status: 'in-registration' }] })
     await screen.findByRole('heading', { name: 'Versão 2' })
-    expect(screen.getAllByText('Vigência não definida: aguarda decisão administrativa').length).toBeGreaterThan(0)
-    expect(screen.queryByRole('button', { name: /Ativar|Tornar vigente/ })).toBeNull()
+    expect(screen.getByText(/Ao ser finalizada, passará a ser a vigente no SIGOSC/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Ativar|Tornar vigente/ })).toBeNull() // T08
+    fireEvent.click(screen.getByRole('button', { name: 'Finalizar cadastro' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirmar finalização interna' })
+    expect(dialog.textContent).toMatch(/passará a ser a vigente no SIGOSC.*versão original ficará registrada como substituída.*não representa aprovação jurídica/)
+    expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(0) // T07
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Finalizar cadastro' }))
+    const done = await screen.findByText(/Cadastro finalizado e Versão 2 ativada como vigente no SIGOSC; a versão original passa a constar como substituída/)
+    expect(done.textContent).toMatch(/Não representa aprovação jurídica/) // T19
+    expect(workPlans.calls.filter((c) => c.kind === 'finalize')).toHaveLength(1)
+    await waitFor(() => expect(within(versionsList()).getAllByRole('listitem')[0]?.textContent).toMatch(/Versão original.*Substituída no SIGOSC/))
+    expect(within(versionsList()).getAllByRole('listitem')[1]?.textContent).toMatch(/Versão 2.*Vigente no SIGOSC/)
+    expect(screen.getAllByText('Vigente no SIGOSC').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Registrar alteração formal' })).toBeTruthy() // T11
+    fireEvent.click(screen.getByRole('button', { name: 'Comparar com a anterior: Versão 2' })) // T21
+    expect(await screen.findByRole('table', { name: 'Diferenças entre Versão original e Versão 2' })).toBeTruthy()
+  })
+
+  it('C01-T16 — data futura de efeitos: aviso com a data e selo no histórico', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: activeChain('2099-03-01') })
+    await screen.findByRole('heading', { name: 'Versão 2' })
+    expect(screen.getByText('Versão vigente no SIGOSC desde sua finalização interna. A alteração formal possui início de efeitos administrativos previsto para 01/03/2099.')).toBeTruthy()
+    expect(within(versionsList()).getByText('Efeitos administrativos a partir de 01/03/2099')).toBeTruthy()
+  })
+
+  it('C01-T17/T18 — sem data: "não informada", nada presumido; data alcançada: sem aviso de efeitos futuros', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: activeChain(null) })
+    await screen.findByRole('heading', { name: 'Versão 2' })
+    expect(screen.getByText('Versão vigente no SIGOSC. Data de produção de efeitos administrativos não informada.')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/produz efeitos|previsto para/)
+    cleanup()
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: activeChain('2026-01-15') })
+    await screen.findByRole('heading', { name: 'Versão 2' })
+    expect(screen.getByText(/Data de produção de efeitos informada no ato: 15\/01\/2026/)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/previsto para|Efeitos administrativos a partir de/)
+  })
+
+  it('C01-T20/T21 — versão substituída consultável, sem afirmar revogação jurídica', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: activeChain(null) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Consultar: Versão original' }))
+    await screen.findByRole('heading', { name: 'Versão original' })
+    expect(screen.getByText(/Versão substituída no SIGOSC.*Permanece preservada para consulta; a substituição cadastral não significa revogação jurídica/)).toBeTruthy()
+    expect(screen.getByText('Crianças')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Excluir|Restaurar|Ativar/ })).toBeNull()
+  })
+
+  it('Legado pending-decision finalizado: identificado, nunca vigente; nova alteração bloqueada com o motivo', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [ORIGINAL, { ...V2, status: 'finalized', revision: 2, activation: 'pending-decision' }] })
+    await screen.findByRole('heading', { name: 'Versão original' })
+    expect(within(versionsList()).getAllByRole('listitem')[0]?.textContent).toMatch(/Vigente no SIGOSC/)
+    expect(within(versionsList()).getAllByRole('listitem')[1]?.textContent).toMatch(/Finalizada sem ativação: aguarda regularização/)
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
+    expect(screen.getByText(/Nova alteração formal fica bloqueada até a regularização administrativa/)).toBeTruthy()
   })
 })

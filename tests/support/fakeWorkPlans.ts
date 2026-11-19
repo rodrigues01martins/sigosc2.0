@@ -3,7 +3,7 @@
  * Não decide autorização (testada no servidor com emuladores); aplica as gravações como o
  * servidor confirmaria (com as validações de domínio), para exercitar a interface.
  */
-import { checkVersionFinalization, decideVersionCreation, validateFormalAct, versionIdFor, type VersionSummary } from '../../src/domain/workPlanVersions.ts'
+import { checkActivationChain, checkVersionFinalization, decideVersionCreation, parseStoredActivation, validateFormalAct, versionIdFor, type VersionSummary } from '../../src/domain/workPlanVersions.ts'
 import { emptyValues, validateCorrection, type FieldValue, type WorkPlanField, type WorkPlanValues } from '../../src/domain/workPlans.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import type { WorkPlansSdk } from '../../src/services/workPlans/workPlanService.ts'
@@ -39,6 +39,15 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
   const prefix = (oscId: string, partnershipId: string) => `oscs/${oscId}/partnerships/${partnershipId}/workPlans/`
   const versionsOf = (oscId: string, partnershipId: string) =>
     [...docs.entries()].filter(([p]) => p.startsWith(prefix(oscId, partnershipId)) && !p.slice(prefix(oscId, partnershipId).length).includes('/'))
+
+  const summariesOf = (oscId: string, partnershipId: string): VersionSummary[] =>
+    versionsOf(oscId, partnershipId).map(([, d]) => ({
+      id: d.id as string,
+      sequence: (d.origin as { sequence: number }).sequence,
+      registrationStatus: d.registrationStatus as 'in-registration' | 'finalized',
+      activationStatus: parseStoredActivation((d.activation as { status?: string } | undefined)?.status),
+      previousWorkPlanId: ((d.origin as { previousWorkPlanId?: string }).previousWorkPlanId ?? null),
+    }))
 
   const sdk: WorkPlansSdk<FakeWorkPlansDb> = {
     async getWorkPlan(_db, oscId, partnershipId) {
@@ -104,19 +113,27 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       if (!doc) return { ok: false, error: 'not-structured' }
       const check = checkVersionFinalization(valuesOf(doc), FACTS, null, TODAY)
       if (check.pending.length) return { ok: false, error: 'finalization-pending', pending: check.pending }
-      docs.set(path, { ...doc, registrationStatus: 'finalized', revision: (doc.revision as number) + 1, finalizedAt: new Date(), finalizedBy: 'simulado' })
-      return ok(request.workPlanId, (doc.revision as number) + 1)
+      const sequence = (doc.origin as { sequence: number }).sequence
+      const revision = (doc.revision as number) + 1
+      if (sequence === 1) {
+        docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: new Date(), finalizedBy: 'simulado' })
+        return ok(request.workPlanId, revision)
+      }
+      // DEC-PT-003 (como o servidor): finalização + ativação; a vigente anterior passa a substituída.
+      const chain = checkActivationChain(summariesOf(request.oscId, request.partnershipId), request.workPlanId)
+      if (!chain.ok) return { ok: false, error: 'forbidden', reason: chain.reason }
+      const now = new Date()
+      docs.set(path, { ...doc, registrationStatus: 'finalized', revision, finalizedAt: now, finalizedBy: 'simulado', activation: { status: 'active', activatedAt: now, supersededWorkPlanId: chain.supersededId } })
+      const prevPath = workPlanPath(request.oscId, request.partnershipId, chain.supersededId)
+      const prev = docs.get(prevPath) as Record<string, unknown>
+      docs.set(prevPath, { ...prev, activation: { ...(prev.activation as object | undefined), status: 'superseded', supersededAt: now, supersededByWorkPlanId: request.workPlanId } })
+      const act = doc.formalAct as { effectiveDate?: string | null }
+      return { ...ok(request.workPlanId, revision), activation: { supersededWorkPlanId: chain.supersededId, sequence, effectiveDate: act.effectiveDate ?? null } }
     },
     async createVersion(request) {
       const custom = await intercept('create-version', request)
       if (custom) return custom
-      const entries = versionsOf(request.oscId, request.partnershipId)
-      const summaries: VersionSummary[] = entries.map(([, d]) => ({
-        id: d.id as string,
-        sequence: (d.origin as { sequence: number }).sequence,
-        registrationStatus: d.registrationStatus as 'in-registration' | 'finalized',
-        activationStatus: ((d.activation as { status?: string } | undefined)?.status ?? null) as VersionSummary['activationStatus'],
-      }))
+      const summaries = summariesOf(request.oscId, request.partnershipId)
       const decision = decideVersionCreation(ALLOWED, 'em-execucao', summaries, request.baseWorkPlanId)
       if (!decision.allowed) return { ok: false, error: 'forbidden', reason: decision.reason }
       const base = docs.get(workPlanPath(request.oscId, request.partnershipId, request.baseWorkPlanId)) as Record<string, unknown>

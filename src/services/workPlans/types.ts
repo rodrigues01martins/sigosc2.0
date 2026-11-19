@@ -1,4 +1,4 @@
-import type { FormalAct } from '../../domain/workPlanVersions.ts'
+import type { FormalAct, StoredActivationStatus } from '../../domain/workPlanVersions.ts'
 import type { WorkPlanRegistrationStatus, WorkPlanValues } from '../../domain/workPlans.ts'
 import type { PartnershipErrorKind } from '../partnerships/types.ts'
 
@@ -14,8 +14,15 @@ export interface WorkPlan {
   readonly previousWorkPlanId: string | null
   /** Ato formal declarado (somente versões posteriores). */
   readonly formalAct: (FormalAct & { readonly declaredBy: string | null; readonly declaredAt: Date | null }) | null
-  /** Situação de ativação gravada (somente versões posteriores; ativação bloqueada nesta versão do sistema). */
-  readonly activationStatus: 'pending-decision' | 'active' | 'superseded' | null
+  /** Situação de ativação GRAVADA pelo servidor (DEC-PT-003); a original só grava `superseded`. */
+  readonly activationStatus: StoredActivationStatus | null
+  /** Metadados de vigência cadastral (hora do SERVIDOR); não representam eficácia jurídica. */
+  readonly activation: {
+    readonly activatedAt: Date | null
+    readonly supersededWorkPlanId: string | null
+    readonly supersededAt: Date | null
+    readonly supersededByWorkPlanId: string | null
+  }
   readonly oscId: string
   readonly partnershipId: string
   readonly registrationStatus: WorkPlanRegistrationStatus

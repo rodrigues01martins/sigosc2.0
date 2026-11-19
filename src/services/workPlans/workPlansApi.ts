@@ -27,7 +27,16 @@ export type WorkPlansFailure = {
   readonly fields?: Partial<Record<CorrectionErrorKey | FormalActField | 'formalAct', FieldErrorCode | CorrectionErrorCode | FormalActErrorCode | 'required'>>
   readonly pending?: readonly string[]
 }
-export type WorkPlansResult = { readonly ok: true; readonly id: string; readonly revision: number; readonly changed: boolean; readonly warnings: readonly string[] } | WorkPlansFailure
+/** DEC-PT-003: ativação cadastral confirmada pelo servidor na finalização de versão posterior. */
+export interface ActivationOutcome {
+  readonly supersededWorkPlanId: string
+  readonly sequence: number
+  /** Data de efeitos DECLARADA (null = não informada). */
+  readonly effectiveDate: string | null
+}
+export type WorkPlansResult =
+  | { readonly ok: true; readonly id: string; readonly revision: number; readonly changed: boolean; readonly warnings: readonly string[]; readonly activation?: ActivationOutcome | null }
+  | WorkPlansFailure
 
 /** Entrada do histórico de correções materiais (DEC-PT-002), já autorizada pelo servidor. */
 export interface CorrectionEntry {
@@ -134,7 +143,11 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     const plan = body.workPlan as Record<string, unknown> | undefined
     if (typeof plan?.revision !== 'number' || typeof plan.id !== 'string') return { ok: false, error: 'unknown' }
     const changed = body.created === true || body.changed === true || body.finalized === true || body.corrected === true
-    return { ok: true, id: plan.id, revision: plan.revision, changed, warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [] }
+    const activation =
+      plan.activationStatus === 'active' && typeof plan.supersededWorkPlanId === 'string' && typeof plan.sequence === 'number'
+        ? { supersededWorkPlanId: plan.supersededWorkPlanId, sequence: plan.sequence, effectiveDate: typeof plan.effectiveDate === 'string' ? plan.effectiveDate : null }
+        : null
+    return { ok: true, id: plan.id, revision: plan.revision, changed, warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [], activation }
   }
 
   return {

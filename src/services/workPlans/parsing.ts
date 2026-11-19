@@ -1,6 +1,6 @@
 /** Leitura defensiva do Plano estruturado (DEV-02.2): fora do formato ou de outro caminho → descartado. */
 import { isValidDate } from '../../domain/partnerships.ts'
-import { FORMAL_ACT_TYPES, isVersionId, type FormalActType } from '../../domain/workPlanVersions.ts'
+import { FORMAL_ACT_TYPES, isVersionId, parseStoredActivation, type FormalActType } from '../../domain/workPlanVersions.ts'
 import { FIELD_IDS, ORIGINAL_WORK_PLAN_ID, emptyValues, parseFieldValue } from '../../domain/workPlans.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
 import type { WorkPlan } from './types.ts'
@@ -41,9 +41,16 @@ export function parseWorkPlan(raw: RawDocument, oscId: string, partnershipId: st
         }
       : null
   if (sequence > 1 && !formalAct) return null
-  const activation = (d.activation as Record<string, unknown> | undefined)?.status
-  const activationStatus: WorkPlan['activationStatus'] =
-    sequence === 1 ? null : activation === 'active' || activation === 'superseded' ? activation : 'pending-decision'
+  const activationRaw = (typeof d.activation === 'object' && d.activation !== null ? d.activation : {}) as Record<string, unknown>
+  const storedActivation = parseStoredActivation(activationRaw.status)
+  // Original: só `superseded` é gravado. Posterior sem situação válida: tratada como legado (nunca vigente).
+  const activationStatus: WorkPlan['activationStatus'] = sequence === 1 ? (storedActivation === 'superseded' ? 'superseded' : null) : (storedActivation ?? 'pending-decision')
+  const activation = {
+    activatedAt: toDate(activationRaw.activatedAt),
+    supersededWorkPlanId: isVersionId(activationRaw.supersededWorkPlanId) ? activationRaw.supersededWorkPlanId : null,
+    supersededAt: toDate(activationRaw.supersededAt),
+    supersededByWorkPlanId: isVersionId(activationRaw.supersededByWorkPlanId) ? activationRaw.supersededByWorkPlanId : null,
+  }
   if (d.registrationStatus !== 'in-registration' && d.registrationStatus !== 'finalized') return null
   const stored = (typeof d.values === 'object' && d.values !== null ? d.values : {}) as Record<string, unknown>
   const values = emptyValues()
@@ -59,6 +66,7 @@ export function parseWorkPlan(raw: RawDocument, oscId: string, partnershipId: st
     previousWorkPlanId: sequence > 1 && isVersionId(origin.previousWorkPlanId) ? origin.previousWorkPlanId : null,
     formalAct,
     activationStatus,
+    activation,
     oscId,
     partnershipId,
     registrationStatus: d.registrationStatus,

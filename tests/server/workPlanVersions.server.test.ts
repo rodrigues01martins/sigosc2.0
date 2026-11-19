@@ -1,5 +1,5 @@
 /**
- * DEV-02.3 — Versionamento do Plano de Trabalho no AMBIENTE CONFIÁVEL (`npm run test:server`).
+ * DEV-02.3 e DEV-02.3-C01 — Versionamento e vigência do Plano no AMBIENTE CONFIÁVEL (`npm run test:server`).
  * Emuladores de Auth e Firestore; Admin SDK, código REAL de `api/` e política de PRODUÇÃO.
  */
 import { after, before, beforeEach, describe, test } from 'node:test'
@@ -115,7 +115,7 @@ describe('Criação de nova versão (alteração formal)', () => {
     assert.ok(v2)
     assert.deepEqual(v2.values, before?.values, 'cópia integral, inclusive zero, não aplicável e não informado')
     assert.deepEqual(v2.origin, { kind: 'formal-alteration', formalVersion: true, sequence: 2, sourceWorkPlanId: 'original', previousWorkPlanId: 'original', baseRevision: 3 })
-    assert.deepEqual([v2.registrationStatus, v2.revision, v2.activation.status, v2.createdBy, v2.partnershipId, v2.oscId], ['in-registration', 1, 'pending-decision', OP.uid, RUNNING, ALFA])
+    assert.deepEqual([v2.registrationStatus, v2.revision, v2.activation.status, v2.createdBy, v2.partnershipId, v2.oscId], ['in-registration', 1, 'awaiting-finalization', OP.uid, RUNNING, ALFA])
     assert.equal(v2.formalAct.type, 'termo-aditivo')
     assert.equal(v2.formalAct.actDate, '2026-09-01')
     assert.equal(v2.formalAct.effectiveDate, '2026-10-01')
@@ -157,10 +157,11 @@ describe('Criação de nova versão (alteração formal)', () => {
     status(await createVersion(OP), 409, 'pending-version-exists')
     status(await update(OP, 'v2', { justification: informed('Nova redação.') }, 1), 200)
     status(await finalize(OP, 'v2', 2), 200)
-    // Sem regra de ativação homologada, a vigente continua a original: v2 não pode ser base.
-    status(await createVersion(OP, { base: 'v2', baseRevision: 3 }), 409, 'base-not-current')
-    status(await createVersion(OP), 409, 'pending-version-exists')
-    assert.deepEqual(await versions(), ['original', 'v2'])
+    // DEC-PT-003/004: v2 ativada → a original deixa de ser base; v3 parte da v2.
+    status(await createVersion(OP), 409, 'base-not-current')
+    status(await createVersion(OP, { base: 'v2', baseRevision: 3 }), 201)
+    status(await createVersion(OP, { base: 'v2', baseRevision: 3 }), 409, 'pending-version-exists')
+    assert.deepEqual(await versions(), ['original', 'v2', 'v3'])
   })
 
   test('DEV-02.3-T17/T18 — reenvio idempotente e criação concorrente: nunca duas versões', async () => {
@@ -198,24 +199,11 @@ describe('Cadastro, finalização e correção por versão', () => {
     status(await finalize(OP, 'v2', 3), 200)
     const v2 = await docOf('v2')
     assert.deepEqual([v2?.registrationStatus, v2?.finalizedBy, v2?.revision, v2?.formalAct.reference], ['finalized', OP.uid, 4, '1º TA/2026'])
-    assert.deepEqual(await docOf('original'), original)
+    const { activation: originalActivation, ...originalRest } = (await docOf('original')) ?? {}
+    assert.deepEqual(originalRest, original, 'original preservado: só os metadados de vigência mudam')
+    assert.equal(originalActivation.status, 'superseded')
     status(await update(OP, 'v2', { estimatedBeneficiaries: informed(130) }, 4), 409, 'already-finalized')
     status(await call(OP, 'PATCH', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), expectedRevision: 4, formalAct: ACT }), 409, 'already-finalized')
-  })
-
-  test('Finalização da versão exige os requisitos do Plano; ativação permanece BLOQUEADA (regra não homologada)', async () => {
-    await finalizedOriginal()
-    await createVersion(OP)
-    status(await update(OP, 'v2', { executionEnd: { state: 'not-informed' } }, 1), 200)
-    const pending = await finalize(OP, 'v2', 2)
-    status(pending, 422, 'finalization-pending')
-    status(await update(OP, 'v2', { executionEnd: informed('2028-02-28') }, 2), 200)
-    status(await finalize(OP, 'v2', 3), 200)
-    const activate = await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'activate' })
-    status(activate, 403, 'vigency-rule-pending')
-    assert.equal((await docOf('v2'))?.activation.status, 'pending-decision')
-    await setPermissions(DELEGATE, ['work-plan.view'])
-    status(await call(DELEGATE, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'activate' }), 403, 'permission-not-granted')
   })
 
   test('DEV-02.3-T14/T15/T16 — correção material identifica a versão; outra versão não muda; histórico preservado e filtrável', async () => {
@@ -273,6 +261,189 @@ describe('Restrições e isolamento', () => {
     assert.deepEqual(await versions(), ['original'])
     status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, requestId: nextRequest(), action: 'create-version', baseWorkPlanId: '../../x', baseRevision: 3, formalAct: ACT }), 400)
     status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, requestId: nextRequest(), action: 'create-version', baseWorkPlanId: 'original', baseRevision: 3, formalAct: ACT, sequence: 9 }), 400)
+  })
+})
+
+// ============================================================================ DEV-02.3-C01
+const finalizeReq = (user: { uid: string }, workPlanId: string, expectedRevision: number, requestId = nextRequest(), extra: Record<string, unknown> = {}) =>
+  call(user, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true, ...extra })
+/** Original finalizado + v2 criada (revisão 1) com o ato indicado. */
+async function withDraftV2(act: Record<string, unknown> = ACT) {
+  await finalizedOriginal()
+  status(await createVersion(OP, { act }), 201)
+}
+const without = (value: Record<string, unknown> | undefined, key: string) => Object.fromEntries(Object.entries(value ?? {}).filter(([k]) => k !== key))
+const activations = async () => (await events()).filter((e) => e.action === 'version-activated')
+const stateOf = async () => Object.fromEntries((await deps.db.collection(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans`).get()).docs.map((d) => [d.id, [d.get('registrationStatus'), d.get('activation.status') ?? null]]))
+
+describe('DEV-02.3-C01 — DEC-PT-003: ativação automática na finalização', () => {
+  test('C01-T01/T02/T03/T19/T20 — finalizar v2 a ativa; original substituída e preservada; uma só vigente; sem aprovação jurídica', async () => {
+    await withDraftV2()
+    const original = await docOf('original')
+    const r = await finalizeReq(OP, 'v2', 1, 'finalizar-v2-0001')
+    status(r, 200)
+    assert.deepEqual(r.body.workPlan, { id: 'v2', revision: 2, registrationStatus: 'finalized', sequence: 2, activationStatus: 'active', supersededWorkPlanId: 'original', activatedAt: null, effectiveDate: '2026-10-01' })
+    assert.equal(JSON.stringify(r.body).match(/jur[ií]dic|aprova/i), null, 'resposta não afirma aprovação jurídica')
+    const v2 = await docOf('v2')
+    assert.deepEqual([v2?.registrationStatus, v2?.activation.status, v2?.activation.rule, v2?.activation.activatedBy, v2?.activation.supersededWorkPlanId], ['finalized', 'active', 'DEC-PT-003', OP.uid, 'original'])
+    assert.ok(v2?.activation.activatedAt instanceof Timestamp, 'hora do servidor')
+    assert.deepEqual(v2?.activation.activatedAt, v2?.finalizedAt, 'finalização e ativação no mesmo instante (mesma transação)')
+    const after = await docOf('original')
+    assert.deepEqual([after?.activation.status, after?.activation.supersededByWorkPlanId], ['superseded', 'v2'])
+    assert.deepEqual(without(after, 'activation'), original, 'T20: valores, revisão e finalização da original intactos')
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'active'] })
+    const [ev] = await activations()
+    assert.deepEqual(
+      [ev?.workPlanId, ev?.previousWorkPlanId, ev?.sequence, ev?.actorUid, ev?.actorAuthority, ev?.requestId, ev?.revision, ev?.rule, ev?.effectiveDate, ev?.effectsAtActivation],
+      ['v2', 'original', 2, OP.uid, 'member', 'finalizar-v2-0001', 2, 'DEC-PT-003', '2026-10-01', 'reached'],
+    )
+    assert.equal((await events()).filter((e) => e.action === 'finalize' && e.workPlanId === 'v2').length, 1, 'finalização e ativação rastreáveis separadamente')
+  })
+
+  test('C01-T04/T05/T14 — atomicidade: falha em qualquer etapa não deixa ativação parcial; revisão obsoleta recusada', async () => {
+    await withDraftV2()
+    status(await update(OP, 'v2', { executionEnd: { state: 'not-informed' } }, 1), 200)
+    const snapshot = async () => ({ docs: await stateOf(), original: await docOf('original'), v2: await docOf('v2'), events: (await events()).length })
+    const before = await snapshot()
+    status(await finalizeReq(OP, 'v2', 2), 422, 'finalization-pending')
+    assert.deepEqual(await snapshot(), before)
+    status(await finalizeReq(OP, 'v2', 1), 409, 'stale')
+    assert.deepEqual(await snapshot(), before)
+    // Estado inconsistente gravado por fora (duas ativas): recusa sem gravar nada.
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/v9`).set({ id: 'v9', oscId: ALFA, partnershipId: RUNNING, origin: { sequence: 9 }, registrationStatus: 'finalized', activation: { status: 'active' } })
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/v8`).set({ id: 'v8', oscId: ALFA, partnershipId: RUNNING, origin: { sequence: 8 }, registrationStatus: 'finalized', activation: { status: 'active' } })
+    status(await update(OP, 'v2', { executionEnd: informed('2028-02-28') }, 2), 200)
+    const before2 = await snapshot()
+    status(await finalizeReq(OP, 'v2', 3), 409, 'versions-inconsistent')
+    assert.deepEqual(await snapshot(), before2)
+  })
+
+  test('C01-T06/T07/T08 — exige work-plan.edit e confirmação; não há ação manual de ativação', async () => {
+    await withDraftV2()
+    for (const [user, permissions] of [[DELEGATE, ['work-plan.view']], [DELEGATE, ['work-plan.view', 'work-plan.finalize']], [ADMIN, []]] as const) {
+      await setPermissions(user, [...permissions])
+      status(await finalizeReq(user, 'v2', 1), 403, 'permission-not-granted')
+    }
+    status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'finalize', expectedRevision: 1 }), 400)
+    status(await finalizeReq(OP, 'v2', 1, nextRequest(), { confirm: false }), 400)
+    status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'activate' }), 400)
+    status(await finalizeReq(OP, 'v2', 1, nextRequest(), { activation: { status: 'active' } }), 400)
+    assert.deepEqual(await stateOf(), { original: ['finalized', null], v2: ['in-registration', 'awaiting-finalization'] })
+  })
+})
+
+describe('DEV-02.3-C01 — DEC-PT-004: sequência, concorrência e idempotência', () => {
+  test('C01-T09/T10/T11 — original → v2 → v3 → v4; uma em cadastramento por vez; sempre a partir da vigente', async () => {
+    await withDraftV2()
+    status(await createVersion(OP), 409, 'pending-version-exists') // T10
+    status(await finalizeReq(OP, 'v2', 1), 200)
+    status(await createVersion(OP, { baseRevision: 3 }), 409, 'base-not-current') // T09: original não é mais a vigente
+    status(await createVersion(OP, { base: 'v2', baseRevision: 2 }), 201) // T11
+    assert.deepEqual((await docOf('v3'))?.origin.previousWorkPlanId, 'v2')
+    assert.deepEqual((await docOf('v3'))?.values, (await docOf('v2'))?.values)
+    status(await finalizeReq(OP, 'v3', 1), 200)
+    status(await createVersion(OP, { base: 'v3', baseRevision: 2 }), 201)
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'superseded'], v3: ['finalized', 'active'], v4: ['in-registration', 'awaiting-finalization'] })
+    assert.deepEqual([(await docOf('v2'))?.activation.supersededByWorkPlanId, (await docOf('v2'))?.activation.supersededWorkPlanId], ['v3', 'original'])
+  })
+
+  test('C01-T12/T13 — reenvio idempotente; finalizações simultâneas: uma única ativação', async () => {
+    await withDraftV2()
+    const first = await finalizeReq(OP, 'v2', 1, 'finalizar-repetido-1')
+    status(first, 200)
+    const again = await finalizeReq(OP, 'v2', 1, 'finalizar-repetido-1')
+    status(again, 200)
+    assert.equal(again.body.finalized, false)
+    const w = again.body.workPlan as Record<string, unknown>
+    assert.deepEqual([w.id, w.revision, w.activationStatus, w.supersededWorkPlanId, w.effectiveDate], ['v2', 2, 'active', 'original', '2026-10-01'])
+    assert.equal(typeof w.activatedAt, 'string')
+    assert.equal((await activations()).length, 1)
+    assert.equal((await docOf('v2'))?.revision, 2)
+    // Outra pessoa / outro pedido depois: não reativa nem substitui outra versão.
+    await setPermissions(DELEGATE, ['work-plan.edit'])
+    status(await finalizeReq(DELEGATE, 'v2', 2), 409, 'already-finalized')
+    // T13: concorrência real.
+    await seed()
+    await withDraftV2()
+    await setPermissions(DELEGATE, ['work-plan.edit'])
+    const parallel = await Promise.all([finalizeReq(OP, 'v2', 1, 'simultaneo-op-1'), finalizeReq(DELEGATE, 'v2', 1, 'simultaneo-dl-1'), finalizeReq(OP, 'v2', 1, 'simultaneo-op-1'), finalizeReq(OP, 'v2', 1, 'simultaneo-op-2')])
+    assert.equal(parallel.filter((r) => r.status === 200 && r.body.finalized === true).length, 1, JSON.stringify(parallel.map((r) => [r.status, r.body])))
+    assert.ok(parallel.every((r) => r.status === 200 || (r.status === 409 && ['already-finalized', 'stale'].includes(String(r.body.reason ?? r.body.error)))), JSON.stringify(parallel.map((r) => r.body)))
+    assert.equal((await activations()).length, 1)
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'active'] })
+  })
+})
+
+describe('DEV-02.3-C01 — DEC-PT-005: efeitos administrativos', () => {
+  test('C01-T15/T17/T18 — efeitos futuros ativam e sinalizam; ausência não é presumida; data alcançada sem aviso', async () => {
+    await withDraftV2({ ...ACT, effectiveDate: '2027-03-01' })
+    const r = await finalizeReq(OP, 'v2', 1)
+    status(r, 200)
+    assert.deepEqual([(r.body.workPlan as Record<string, unknown>).activationStatus, (r.body.workPlan as Record<string, unknown>).effectiveDate], ['active', '2027-03-01'])
+    assert.equal((await activations())[0]?.effectsAtActivation, 'future')
+    assert.equal((await docOf('v2'))?.formalAct.effectiveDate, '2027-03-01', 'data mantida para módulos futuros')
+    await seed()
+    await withDraftV2(without(ACT, 'effectiveDate'))
+    const n = await finalizeReq(OP, 'v2', 1)
+    status(n, 200)
+    assert.equal((n.body.workPlan as Record<string, unknown>).effectiveDate, null)
+    const [ev] = await activations()
+    assert.deepEqual([ev?.effectiveDate, ev?.effectsAtActivation], [null, 'not-informed'])
+    assert.equal((await docOf('v2'))?.formalAct.effectiveDate, null, 'data de finalização não vira data de efeitos')
+    await seed()
+    await withDraftV2({ ...ACT, effectiveDate: TODAY })
+    status(await finalizeReq(OP, 'v2', 1), 200)
+    assert.equal((await activations())[0]?.effectsAtActivation, 'reached')
+  })
+})
+
+describe('DEV-02.3-C01 — preservação, segurança e legado', () => {
+  test('C01-T22 — correção material segue vinculada à versão (inclusive a substituída)', async () => {
+    await withDraftV2()
+    status(await finalizeReq(OP, 'v2', 1), 200)
+    status(await call(OP, 'POST', { oscId: ALFA, partnershipId: RUNNING, workPlanId: 'original', requestId: 'correcao-substituida-1', action: 'correct', expectedRevision: 3, changes: { approvalDate: informed('2026-02-11') }, justification: 'Erro de transcrição na versão original.', declaration: true }), 200)
+    assert.deepEqual([(await docOf('original'))?.values.approvalDate, (await docOf('original'))?.activation.status], [informed('2026-02-11'), 'superseded'])
+    assert.deepEqual((await docOf('v2'))?.values.approvalDate, informed('2026-02-10'))
+    assert.deepEqual((await events()).filter((e) => e.action === 'material-correction').map((e) => e.workPlanId), ['original'])
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'active'] })
+  })
+
+  test('C01-T23/T24 — outra OSC e sem autorização não ativam; suspensão comercial e arquivada bloqueiam; suspensa admite', async () => {
+    await withDraftV2()
+    status(await call(OP, 'POST', { oscId: GAMA, partnershipId: RUNNING, workPlanId: 'v2', requestId: nextRequest(), action: 'finalize', expectedRevision: 1, confirm: true }), 403, 'no-membership')
+    await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'suspended' })
+    status(await finalizeReq(OP, 'v2', 1), 403, 'commercial-suspension')
+    await deps.db.doc(oscPath(OSCS.ALFA)).update({ commercialStatus: 'active' })
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}`).update({ administrativeStatus: 'arquivada' })
+    status(await finalizeReq(OP, 'v2', 1), 403, 'partnership-archived')
+    assert.deepEqual(await stateOf(), { original: ['finalized', null], v2: ['in-registration', 'awaiting-finalization'] })
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}`).update({ administrativeStatus: 'suspensa' })
+    status(await finalizeReq(OP, 'v2', 1), 200)
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'active'] })
+  })
+
+  test('Legado (pending-decision): finalizado não é ativado retroativamente e protege a criação; em cadastramento ativa ao finalizar', async () => {
+    await finalizedOriginal()
+    const legacy = (await docOf('original')) ?? {}
+    // v2 gravada pela DEV-02.3 e finalizada ANTES da DEC-PT-003.
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/v2`).set({
+      ...legacy, id: 'v2', origin: { kind: 'formal-alteration', formalVersion: true, sequence: 2, sourceWorkPlanId: 'original', previousWorkPlanId: 'original', baseRevision: 3 },
+      formalAct: { ...ACT, typeDescription: null, declaredBy: OP.uid, automatedVerification: false }, activation: { status: 'pending-decision' }, revision: 2, finalizationRequestId: 'legado-final-1', finalizedBy: OP.uid,
+    })
+    const snapshot = await stateOf()
+    status(await createVersion(OP), 409, 'legacy-version-pending')
+    status(await createVersion(OP, { base: 'v2', baseRevision: 2 }), 409, 'legacy-version-pending')
+    status(await finalizeReq(OP, 'v2', 2), 409, 'already-finalized')
+    status(await finalizeReq(OP, 'v2', 2, 'legado-final-1'), 200) // reenvio do pedido original: só devolve o estado
+    assert.deepEqual(await stateOf(), snapshot, 'nenhuma ativação retroativa automática')
+    assert.equal((await activations()).length, 0)
+    // Legado em cadastramento: a finalização (agora DEC-PT-003) o ativa.
+    await seed()
+    await finalizedOriginal()
+    status(await createVersion(OP), 201)
+    await deps.db.doc(`oscs/${ALFA}/partnerships/${RUNNING}/workPlans/v2`).update({ 'activation.status': 'pending-decision' })
+    status(await finalizeReq(OP, 'v2', 1), 200)
+    assert.deepEqual(await stateOf(), { original: ['finalized', 'superseded'], v2: ['finalized', 'active'] })
   })
 })
 

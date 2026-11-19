@@ -7,7 +7,11 @@ import {
   activationStatusOf,
   checkVersionFinalization,
   currentVersionId,
-  decideActivation,
+  applicableVersionOn,
+  checkActivationChain,
+  currentReference,
+  effectsStatus,
+  resolveCurrentVersion,
   decideVersionCreation,
   denialMessage,
   diffVersions,
@@ -24,7 +28,9 @@ const osc: OrganizationFacts = { id: 'osc-a', registrationStatus: 'active', comm
 const member = (uid: string, permissions: GrantablePermissionId[] = []): MembershipFacts => ({ uid, status: 'active', permissions, canManagePermissions: false })
 const ctx = (m: MembershipFacts, o: OrganizationFacts = osc): AuthorizationContext => ({ uid: m.uid, oscId: 'osc-a', organization: o, membership: m })
 const editor = ctx(member('u', ['work-plan.view', 'work-plan.edit']))
-const v = (id: string, sequence: number, registrationStatus: 'in-registration' | 'finalized', activationStatus: VersionSummary['activationStatus'] = sequence > 1 ? 'pending-decision' : null): VersionSummary => ({ id, sequence, registrationStatus, activationStatus })
+const v = (id: string, sequence: number, registrationStatus: 'in-registration' | 'finalized', activationStatus: VersionSummary['activationStatus'] = null): VersionSummary => ({ id, sequence, registrationStatus, activationStatus })
+const timeline = (versions: VersionSummary[], dates: Record<string, string> = {}) =>
+  versions.map((x) => ({ ...x, effectiveDate: dates[x.id] ?? null, activatedAt: x.activationStatus === 'active' || (x.sequence > 1 && x.activationStatus === 'superseded') ? new Date('2026-11-01T12:00:00Z') : null }))
 const facts = { instrument: 'termo-colaboracao', termStart: '2026-03-01', termEnd: '2028-02-28', formalizationDate: '2026-02-20', administrativeStatus: 'em-execucao', workPlanApprovalDeclared: true } as const
 const informed = (value: string | number) => ({ state: 'informed', value }) as const
 
@@ -57,46 +63,83 @@ test('DEV-02.3-T07 — ato formal: tipo e data obrigatórios; outro ato identifi
   assert.deepEqual(validateFormalAct(null, TODAY), { ok: false, errors: { formalAct: 'required' } })
 })
 
-test('DEV-02.3 — critério de vigência: ativada de maior sequência; sem ativação, a original finalizada', () => {
+test('DEV-02.3-C01 — fonte autoritativa: única versão ativa; sem ela, a original finalizada não substituída', () => {
   assert.equal(currentVersionId([v('original', 1, 'in-registration')]), null)
   assert.equal(currentVersionId([v('original', 1, 'finalized')]), 'original')
-  // Versão posterior finalizada SEM ativação não se torna vigente (regra não homologada).
   const original = v('original', 1, 'finalized')
-  const v2 = v('v2', 2, 'finalized')
-  const pending = [original, v2]
-  assert.equal(currentVersionId(pending), 'original')
-  assert.equal(activationStatusOf(v2, 'original'), 'pending-decision')
+  const draft = v('v2', 2, 'in-registration', 'awaiting-finalization')
+  assert.equal(currentVersionId([original, draft]), 'original')
+  assert.equal(activationStatusOf(draft, 'original'), 'in-registration')
   assert.equal(activationStatusOf(original, 'original'), 'original-current')
-  // Preparado: se um dia houver ativação registrada, a de maior sequência vigora (nunca duas).
-  const activated = [original, v('v2', 2, 'finalized', 'active'), v('v3', 3, 'finalized', 'active')]
-  assert.equal(currentVersionId(activated), 'v3')
-  assert.equal(activationStatusOf(original, 'v3'), 'superseded')
+  // T01/T02: após a ativação de v2 a original passa a substituída.
+  const chain = [v('original', 1, 'finalized', 'superseded'), v('v2', 2, 'finalized', 'active')]
+  assert.equal(currentVersionId(chain), 'v2')
+  assert.equal(activationStatusOf(chain[0] ?? original, 'v2'), 'superseded')
+  // T03: nunca duas vigentes — duas ativas, ativa em cadastramento ou original substituída sem sucessora → inconsistente.
+  assert.deepEqual(resolveCurrentVersion([original, v('v2', 2, 'finalized', 'active'), v('v3', 3, 'finalized', 'active')]), { status: 'inconsistent' })
+  assert.deepEqual(resolveCurrentVersion([original, v('v2', 2, 'in-registration', 'active')]), { status: 'inconsistent' })
+  assert.deepEqual(resolveCurrentVersion([v('original', 1, 'finalized', 'superseded')]), { status: 'inconsistent' })
 })
 
-test('DEV-02.3-T02/T06 — criação: base vigente e finalizada; no máximo uma versão pendente', () => {
+test('DEV-02.3-C01-T09/T10/T11 — DEC-PT-004: parte da vigente; uma em cadastramento; após ativar v2, v3 liberada', () => {
   const base = [v('original', 1, 'finalized')]
-  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', base, 'original').allowed, true)
+  assert.equal(decideVersionCreation(editor, 'em-execucao', base, 'original').allowed, true)
   assert.deepEqual(decideVersionCreation(editor, 'em-execucao', [v('original', 1, 'in-registration')], 'original'), { allowed: false, reason: 'base-not-finalized' })
-  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', [...base, v('v2', 2, 'in-registration')], 'original'), { allowed: false, reason: 'pending-version-exists' })
-  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', [...base, v('v2', 2, 'finalized')], 'v2'), { allowed: false, reason: 'base-not-current' })
+  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', [...base, v('v2', 2, 'in-registration', 'awaiting-finalization')], 'original'), { allowed: false, reason: 'pending-version-exists' })
+  const afterV2 = [v('original', 1, 'finalized', 'superseded'), v('v2', 2, 'finalized', 'active')]
+  assert.equal(decideVersionCreation(editor, 'em-execucao', afterV2, 'v2').allowed, true) // T11 (não confunde ativa com pendente)
+  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', afterV2, 'original'), { allowed: false, reason: 'base-not-current' }) // T09
+  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', [...afterV2, v('v3', 3, 'in-registration', 'awaiting-finalization')], 'v2'), { allowed: false, reason: 'pending-version-exists' })
   assert.deepEqual(decideVersionCreation(editor, 'em-execucao', base, 'v9'), { allowed: false, reason: 'base-not-finalized' })
 })
 
-test('DEV-02.3-T19/T20/T21/T22/T23 — autorização: edit exigida; arquivada; suspensão comercial; administrativa não bloqueia', () => {
-  const base = [v('original', 1, 'finalized')]
-  assert.deepEqual(decideVersionCreation(ctx(member('u', ['work-plan.view'])), 'em-execucao', base, 'original'), { allowed: false, reason: 'permission-not-granted' })
-  assert.deepEqual(decideVersionCreation(ctx(member('admin')), 'em-execucao', base, 'original'), { allowed: false, reason: 'permission-not-granted' })
-  assert.deepEqual(decideVersionCreation(editor, 'arquivada', base, 'original'), { allowed: false, reason: 'partnership-archived' })
-  assert.deepEqual(decideVersionCreation(editor, 'suspensa', base, 'original').allowed, true)
-  const suspended = ctx(member('u', ['work-plan.edit']), { ...osc, commercialStatus: 'suspended' })
-  assert.equal(decideVersionCreation(suspended, 'em-execucao', base, 'original').allowed, false)
+test('DEV-02.3-C01 — legado pending-decision: finalizado não é ativado nem vira vigente; criação protegida', () => {
+  const legacy = [v('original', 1, 'finalized'), v('v2', 2, 'finalized', 'pending-decision')]
+  assert.equal(currentVersionId(legacy), 'original')
+  assert.equal(activationStatusOf(legacy[1] ?? legacy[0] as VersionSummary, 'original'), 'legacy-pending')
+  assert.deepEqual(decideVersionCreation(editor, 'em-execucao', legacy, 'original'), { allowed: false, reason: 'legacy-version-pending' })
+  assert.match(denialMessage('legacy-version-pending', ''), /regularização administrativa/)
+  // Legado AINDA em cadastramento: a finalização (pós DEC-PT-003) o ativa normalmente.
+  const draftLegacy = [v('original', 1, 'finalized'), { ...v('v2', 2, 'in-registration', 'pending-decision'), previousWorkPlanId: 'original' }]
+  assert.deepEqual(checkActivationChain(draftLegacy, 'v2'), { ok: true, supersededId: 'original' })
+  assert.deepEqual(applicableVersionOn(timeline(legacy), '2026-10-01'), { status: 'indeterminate', reason: 'legacy-pending' })
 })
 
-test('DEV-02.3 — ativação PREPARADA mas BLOQUEADA para todos (vigency-rule-pending)', () => {
-  assert.deepEqual(decideActivation(editor, 'em-execucao'), { allowed: false, reason: 'vigency-rule-pending' })
-  assert.deepEqual(decideActivation(ctx(member('u', ['work-plan.view'])), 'em-execucao'), { allowed: false, reason: 'permission-not-granted' })
-  assert.deepEqual(decideActivation(editor, 'arquivada'), { allowed: false, reason: 'partnership-archived' })
-  assert.match(denialMessage('vigency-rule-pending', ''), /decisão administrativa ainda não homologada/)
+test('DEV-02.3-C01-T01/T04 — cadeia da ativação: origem deve ser a vigente', () => {
+  const ok = [v('original', 1, 'finalized'), { ...v('v2', 2, 'in-registration', 'awaiting-finalization'), previousWorkPlanId: 'original' }]
+  assert.deepEqual(checkActivationChain(ok, 'v2'), { ok: true, supersededId: 'original' })
+  const wrongBase = [v('original', 1, 'finalized', 'superseded'), { ...v('v2', 2, 'finalized', 'active'), previousWorkPlanId: 'original' }, { ...v('v3', 3, 'in-registration', 'awaiting-finalization'), previousWorkPlanId: 'original' }]
+  assert.deepEqual(checkActivationChain(wrongBase, 'v3'), { ok: false, reason: 'base-not-current' })
+  assert.deepEqual(checkActivationChain(ok, 'original'), { ok: false, reason: 'base-not-current' })
+  assert.deepEqual(checkActivationChain([...ok, v('v3', 3, 'finalized', 'active'), v('v4', 4, 'finalized', 'active')], 'v2'), { ok: false, reason: 'versions-inconsistent' })
+})
+
+test('DEV-02.3-C01-T15/T17/T18 — DEC-PT-005: efeitos (datas civis de Brasília); nunca presumidos', () => {
+  assert.equal(effectsStatus(null, TODAY), 'not-informed')
+  assert.equal(effectsStatus('2026-11-18', TODAY), 'future')
+  assert.equal(effectsStatus(TODAY, TODAY), 'reached')
+  assert.equal(effectsStatus('2026-01-01', TODAY), 'reached')
+  const entries = timeline([v('original', 1, 'finalized', 'superseded'), v('v2', 2, 'finalized', 'active')], { v2: '2027-01-01' })
+  const ref = currentReference(entries, TODAY)
+  assert.equal(ref.workPlanId, 'v2')
+  assert.equal(ref.effects, 'future')
+  assert.equal(ref.effectiveDate, '2027-01-01')
+  assert.ok(ref.activatedAt instanceof Date)
+  const none = currentReference(timeline([v('original', 1, 'finalized', 'superseded'), v('v2', 2, 'finalized', 'active')]), TODAY)
+  assert.equal(none.effectiveDate, null) // data de ativação NÃO vira data de efeitos
+  assert.equal(none.effects, 'not-informed')
+  assert.deepEqual(currentReference(timeline([v('original', 1, 'finalized')]), TODAY), { status: 'determined', workPlanId: 'original', sequence: 1, activatedAt: null, effectiveDate: null, effects: 'not-applicable' })
+})
+
+test('DEV-02.3-C01 — versão aplicável numa data: só quando determinável; caso contrário, indeterminada', () => {
+  const chain = [v('original', 1, 'finalized', 'superseded'), v('v2', 2, 'finalized', 'superseded'), v('v3', 3, 'finalized', 'active')]
+  const dated = timeline(chain, { v2: '2026-06-01', v3: '2026-12-01' })
+  assert.deepEqual(applicableVersionOn(dated, '2026-05-31'), { status: 'determined', workPlanId: 'original', basis: 'before-first-alteration' })
+  assert.deepEqual(applicableVersionOn(dated, '2026-06-01'), { status: 'determined', workPlanId: 'v2', basis: 'effective-date' })
+  assert.deepEqual(applicableVersionOn(dated, '2026-12-15'), { status: 'determined', workPlanId: 'v3', basis: 'effective-date' })
+  assert.deepEqual(applicableVersionOn(timeline(chain, { v2: '2026-06-01' }), '2026-12-15'), { status: 'indeterminate', reason: 'effective-date-not-informed' })
+  assert.deepEqual(applicableVersionOn(timeline(chain, { v2: '2026-12-01', v3: '2026-06-01' }), '2026-12-15'), { status: 'indeterminate', reason: 'effective-dates-out-of-order' })
+  assert.deepEqual(applicableVersionOn(timeline([v('original', 1, 'in-registration')]), '2026-12-15'), { status: 'indeterminate', reason: 'no-finalized-version' })
 })
 
 test('DEV-02.3-T08 — finalização de versão posterior exige ato válido além dos requisitos do Plano', () => {

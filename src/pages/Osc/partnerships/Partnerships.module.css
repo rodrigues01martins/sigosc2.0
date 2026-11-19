@@ -450,3 +450,28 @@
 .card.selected .selectedDetail {
   color: var(--ds-fg-default);
 }
+
+/* DEV-02.3-C01: selos de vigência cadastral (tokens de feedback do DS-05). Texto sempre presente:
+   a cor apenas reforça (não é o único meio de diferenciação). */
+.vigencyCurrent {
+  background: var(--ds-feedback-success-bg);
+  color: var(--ds-feedback-success-fg);
+  border-color: var(--ds-feedback-success-fg);
+}
+
+.vigencyDraft {
+  background: var(--ds-neutral-0);
+  color: var(--ds-neutral-800);
+  border-style: dashed;
+}
+
+.vigencySuperseded {
+  background: var(--ds-neutral-0);
+  color: var(--ds-fg-muted);
+}
+
+.vigencyFuture {
+  background: var(--ds-feedback-warning-bg);
+  color: var(--ds-feedback-warning-fg);
+  border-color: var(--ds-feedback-warning-fg);
+}

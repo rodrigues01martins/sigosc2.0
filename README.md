@@ -982,7 +982,7 @@ vinculação futura, sem dependência de arquivo inexistente.
 | `origin.previousWorkPlanId` | — | versão-base (vínculo da cadeia) |
 | `origin.baseRevision` | — | revisão da base copiada |
 | `formalAct` | — | `type` (termo-aditivo, apostilamento, outro-ato), `typeDescription`, `reference`, `actDate`, `effectiveDate`, `description`, `declaredBy`, `declaredAt`, `automatedVerification: false` |
-| `activation.status` | — | `pending-decision` (ativação bloqueada) |
+| `activation.status` | `superseded` quando substituída (C01) | `awaiting-finalization` → `active` → `superseded` (ver 11.11) |
 | `values` | dados do Plano | **cópia integral** da base, depois editável até a finalização |
 | `revision` | revisão técnica (concorrência) | idem, reinicia em 1 |
 
@@ -992,19 +992,14 @@ Documento do ato: **não armazenado** (sem upload). Eventos em `workPlanEvents`:
 **Regras de criação (servidor, transação):** `work-plan.edit`; OSC sem suspensão comercial; parceria não
 arquivada (suspensão administrativa não bloqueia); base = versão **vigente** e **finalizada**; `baseRevision`
 igual à atual (senão 409 `stale`); ato válido (tipo e data obrigatórios — H, HF-G05; data não futura);
-**no máximo uma versão posterior pendente** (409 `pending-version-exists`). Id determinístico `v{n}` +
+**no máximo uma versão em cadastramento** (409 `pending-version-exists`; DEC-PT-004). Id determinístico `v{n}` +
 `tx.create` → criações simultâneas geram uma só versão; repetição com o mesmo `requestId` devolve a mesma.
 
 **Finalização da nova versão:** mesma operação da DEV-02.2 (`work-plan.edit`, confirmação explícita, autor e
-data, sem significado jurídico), exigindo também o ato válido. Após finalizar, sem edição comum. A
-finalização **não** torna a versão vigente.
+data, sem significado jurídico), exigindo também o ato válido. Após finalizar, sem edição comum. Desde a
+DEV-02.3-C01, a finalização de versão posterior também a **ativa** (11.11).
 
-**Critério de vigência efetivamente usado:** versão com `activation.status = active` de maior sequência;
-na ausência (situação atual), **a original finalizada**. Nunca há duas vigentes.
-
-**Ativação — preparada, mas bloqueada:** `POST {action:'activate'}` responde 403 `vigency-rule-pending`
-para todos. Decisão administrativa necessária (proposta **DEC-PT-003**): quando uma versão posterior passa a
-vigorar (finalização do registro? data de efeitos do ato? confirmação explícita?) e quem a confirma.
+**Critério de vigência:** substituído pela DEV-02.3-C01 (11.11).
 
 **Interface (PAG-OSC05):** cabeçalho da versão exibida com situação de vigência e dados do ato; "Versões do
 Plano de Trabalho" (lista cronológica: sequência, cadastro, ato, data, autoria; "Consultar" e "Comparar com a
@@ -1021,6 +1016,87 @@ edição, exclusão ou restauração de versões históricas.
 4. Conferir `workPlans/v2` (cópia integral, `activation.status = pending-decision`) e `original` inalterado.
 5. Editar um campo da Versão 2, salvar, finalizar; conferir que a original continua "Vigente no SIGOSC".
 6. "Comparar com a anterior" e "Consultar" a versão original. Reversão: excluir `v2` e seus eventos.
+
+### 11.11 Ativação e vigência cadastral (DEV-02.3-C01)
+
+**Decisões administrativas registradas**
+
+| Decisão | Alternativa aprovada | Efeito no sistema |
+| --- | --- | --- |
+| **DEC-PT-003** | B — ativação automática na finalização | A finalização interna de versão posterior a ativa como referência cadastral vigente, na **mesma transação**; não há ação manual de ativação nem segunda confirmação. |
+| **DEC-PT-004** | A — uma versão em elaboração por parceria | Nova versão parte da vigente; bloqueada enquanto existir versão em cadastramento; liberada após a finalização/ativação. Sequência `original → v2 → v3…`. |
+| **DEC-PT-005** | B — ativação cadastral com efeitos futuros | Data de efeitos futura não impede a ativação; a interface sinaliza a data. Sem data: "não informada" (nunca presumida). Sem agendamento. |
+
+**Vigência cadastral ≠ produção de efeitos.** Vigência cadastral = versão de referência na gestão interna do
+SIGOSC (hora do servidor na finalização). Produção de efeitos = data **declarada** no ato
+(`formalAct.effectiveDate`); nunca convertida em timestamp de ativação, nem o contrário. Nenhuma das duas
+representa aprovação ou validação jurídica.
+
+**Estados (`activation.status`, gravados só pelo servidor)**
+
+| Gravado | Significado | Apresentado |
+| --- | --- | --- |
+| `awaiting-finalization` | versão posterior em cadastramento | "Em cadastramento: ainda não vigente" |
+| `active` | ativada na finalização (DEC-PT-003) | "Vigente no SIGOSC" |
+| `superseded` | deixou de ser a referência cadastral (inclusive a original) | "Substituída no SIGOSC" (não é revogação jurídica) |
+| `pending-decision` | **legado** da DEV-02.3 | em cadastramento: como `awaiting-finalization`; finalizado: "Finalizada sem ativação: aguarda regularização" |
+| (ausente, original) | original finalizada sem substituição | "Vigente no SIGOSC" |
+
+Metadados: `activation.rule = 'DEC-PT-003'`, `activatedAt`, `activatedBy`, `supersededWorkPlanId`,
+`finalizationRequestId`; na substituída: `supersededAt`, `supersededByWorkPlanId`. Valores, revisão e
+finalização da versão substituída **não** são alterados.
+
+**Fonte autoritativa (sem ponteiro adicional):** os próprios documentos de versão, lidos juntos na transação
+(`resolveCurrentVersion` em `src/domain/workPlanVersions.ts`): vigente = a **única** versão posterior `active`;
+sem nenhuma, a original finalizada não substituída. Duas `active`, `active` em cadastramento ou original
+substituída sem sucessora → `inconsistent`: o servidor recusa (409 `versions-inconsistent`) sem gravar, e a
+interface não escolhe versão por suposição. Um ponteiro na parceria criaria uma segunda fonte de verdade e
+exigiria alterar documento de outro módulo; não foi necessário.
+
+**Contrato — `POST /api/osc-work-plans {action:'finalize', workPlanId, expectedRevision, confirm:true, requestId}`**
+(inalterado). Resposta para versão posterior:
+`{ ok, finalized, workPlan: { id, revision, registrationStatus:'finalized', sequence, activationStatus:'active',
+supersededWorkPlanId, activatedAt, effectiveDate } }` (`activatedAt` é `null` na resposta da transação — a hora do
+servidor é gravada e lida na recarga; no reenvio idempotente vem preenchida). `action:'activate'` → 400.
+
+**Transação:** autenticação/vínculo → `work-plan.edit` → suspensão comercial → parceria (arquivada bloqueia;
+suspensa admite) → versão existente e em cadastramento → leitura de todas as versões → origem = vigente →
+revisão → requisitos e ato → finaliza + ativa + substitui + eventos `finalize` e `version-activated`. Qualquer
+falha: nada é gravado. Pedidos simultâneos conflitam na transação; só um finaliza. Reenvio do mesmo
+`requestId` pelo mesmo usuário devolve o estado confirmado, sem novo evento, revisão ou ativação.
+
+**Auditoria (`version-activated`):** OSC, parceria, versão nova e anterior, sequência, usuário, competência,
+data do servidor, data de efeitos declarada, situação dos efeitos na ativação (`future`/`reached`/`not-informed`),
+`requestId`, revisão e regra (`DEC-PT-003`). Eventos anteriores preservados; ilegíveis/inalteráveis pelo navegador.
+
+**Registros futuros (DEC-039):** `currentReference()` (versão vigente, data de ativação, data de efeitos e sua
+situação) e `applicableVersionOn(data)` — determina a versão administrativamente aplicável **somente** quando
+todas as alterações ativadas têm data de efeitos declarada e em ordem; caso contrário, `indeterminate`.
+
+**Datas:** comparação por data civil `AAAA-MM-DD` de **Brasília** (`America/Sao_Paulo`): no servidor,
+`serverToday()`; na interface, `todayInBrasilia()` — nunca o fuso do navegador.
+
+**Registros legados (`pending-decision`)**
+- *Em cadastramento:* finalizados normalmente após este complemento, já sob a DEC-PT-003 (ativação pela
+  finalização, que é ato explícito e posterior à decisão).
+- *Já finalizados:* **não** são ativados retroativamente; a criação de nova versão fica protegida
+  (409 `legacy-version-pending`); a vigente continua a original.
+- *Diagnóstico* (Console do `sigorsc-testes`): consulta de grupo `workPlans` com `activation.status == 'pending-decision'`
+  e `registrationStatus == 'finalized'`. A DEV-02.3 não foi validada no Preview; se nada for encontrado, não há pendência.
+- *Regularização:* **depende de decisão administrativa específica** (ex.: excluir o registro de teste fictício e
+  registrar a alteração novamente; ou autorizar uma ativação excepcional auditada). Nenhum mecanismo excepcional
+  foi criado.
+
+**Validação no Preview (Firebase de testes)**
+1. Sem mudança em `firestore.rules` nem índices. Implantar a função `/api/osc-work-plans` atualizada.
+2. Executar o diagnóstico de legado acima.
+3. Com o Plano original finalizado: "Registrar alteração formal" (informar data de efeitos **futura**) → editar →
+   "Finalizar cadastro" → confirmar uma vez. Conferir: mensagem de ativação; Versão 2 "Vigente no SIGOSC" com o
+   aviso de efeitos futuros e a data; original "Substituída no SIGOSC"; `workPlans/v2.activation.status = active`,
+   `workPlans/original.activation.status = superseded`; eventos `finalize` e `version-activated`.
+4. "Registrar alteração formal" de novo (agora a partir da Versão 2), sem informar data de efeitos → finalizar →
+   conferir "Data de produção de efeitos administrativos não informada" e Versão 2 substituída.
+5. Consultar e comparar as versões. Reversão: excluir `v2`, `v3`, o campo `activation` da original e os eventos.
 
 ## 12. Publicação na Vercel
 
@@ -1054,7 +1130,8 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Convites, criação de usuários, desvinculação, designação de administrador, cadastro de OSCs | Não iniciados |
 | Plano de Trabalho: cadastro estruturado, consulta, finalização interna e correção de erro material (DEV-02.2 e C01) | Implementado; validado em emuladores; **não validado no Preview** |
 | Versões do Plano: alteração formal, histórico, comparação, correção por versão (DEV-02.3) | Implementado; validado em emuladores; **não validado no Preview** |
-| Ativação de nova versão como vigente | **Preparada, mas bloqueada** (aguarda decisão administrativa DEC-PT-003) |
+| Ativação automática na finalização e vigência cadastral (DEV-02.3-C01; DEC-PT-003/004/005) | Implementado; validado em emuladores; **não validado no Preview** |
+| Regularização de versões legadas finalizadas sem ativação | **Bloqueada** (aguarda decisão administrativa específica) |
 | Metas, indicadores, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 

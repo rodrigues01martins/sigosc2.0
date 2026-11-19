@@ -6,9 +6,9 @@
  * PATCH {oscId, partnershipId, [workPlanId], requestId, expectedRevision, changes}           → editar cadastro em andamento
  * PATCH {oscId, partnershipId, workPlanId, requestId, expectedRevision, formalAct}           → editar o ato formal (versão em andamento)
  * POST  {..., [workPlanId], action: 'finalize', expectedRevision, confirm: true}             → finalizar internamente
+ *       (versão posterior: finalização + ATIVAÇÃO cadastral na mesma transação — DEC-PT-003)
  * POST  {..., [workPlanId], action: 'correct', expectedRevision, changes, justification, declaration} → correção material
  * POST  {..., action: 'create-version', baseWorkPlanId, baseRevision, formalAct}             → nova versão (alteração formal)
- * POST  {..., workPlanId, action: 'activate'}                                                → ativação: PREPARADA E BLOQUEADA
  * GET   ?oscId=…&partnershipId=…[&workPlanId=…]                                              → histórico de correções
  *
  * Todas as gravações exigem `work-plan.edit` (DEC-PT-001); o histórico exige `work-plan.view`.
@@ -21,13 +21,17 @@
  * Versões: documentos `workPlans/{original|v2|v3…}` com `origin.sequence` (cadeia FORMAL) distinta
  * de `revision` (técnica). A criação é atômica: a versão seguinte tem ID determinístico, e pedidos
  * simultâneos colidem no mesmo documento. A versão anterior nunca é modificada pela criação.
+ * Não há ação manual de ativação (DEC-PT-003): `action: 'activate'` é recusada como corpo inválido.
+ * Na ativação, a versão substituída recebe SOMENTE `activation.*` (valores, revisão e finalização intactos).
  */
 import { FieldValue, type DocumentSnapshot } from 'firebase-admin/firestore'
 import { evaluate, type AuthorizationContext } from '../../src/domain/authorization.ts'
 import { isAdministrativeStatus, isInstrument, isValidDate } from '../../src/domain/partnerships.ts'
 import {
   checkVersionFinalization,
-  decideActivation,
+  checkActivationChain,
+  effectsStatus,
+  parseStoredActivation,
   decideVersionCreation,
   isVersionId,
   validateFormalAct,
@@ -77,7 +81,6 @@ type Parsed =
   | (Base & { kind: 'update-act'; workPlanId: string; expectedRevision: number; formalAct: unknown })
   | (Base & { kind: 'correct'; workPlanId: string; expectedRevision: number; changes: unknown; justification: unknown; declaration: unknown })
   | (Base & { kind: 'create-version'; baseWorkPlanId: string; baseRevision: number; formalAct: unknown })
-  | (Base & { kind: 'activate'; workPlanId: string })
 
 const json = (status: number, body: Record<string, unknown>): ApiResponse => ({ status, body })
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -128,7 +131,6 @@ function parse(method: string | undefined, rawBody: string): Parsed | null {
     if (!isVersionId(body.baseWorkPlanId) || !isRevision(body.baseRevision)) return null
     return { ...base, kind: 'create-version', baseWorkPlanId: body.baseWorkPlanId, baseRevision: body.baseRevision, formalAct: body.formalAct }
   }
-  if (body.action === 'activate' && keysMatch(body, ['oscId', 'partnershipId', 'workPlanId', 'requestId', 'action'], false)) return { ...base, kind: 'activate', workPlanId }
   return null
 }
 
@@ -148,7 +150,7 @@ class Outcome extends Error {
     this.response = response
   }
 }
-const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'not-finalized', 'base-not-current', 'base-not-finalized', 'pending-version-exists']
+const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'not-finalized', 'base-not-current', 'base-not-finalized', 'pending-version-exists', 'legacy-version-pending', 'versions-inconsistent']
 const deny = (reason: VersionDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 
 function partnershipFacts(snap: DocumentSnapshot | undefined, oscId: string): PartnershipFacts | null {
@@ -194,12 +196,29 @@ const storedAct = (snap: DocumentSnapshot): FormalAct | null => {
   return { type, typeDescription, reference, actDate, description, effectiveDate } as FormalAct
 }
 function summaryOf(snap: DocumentSnapshot): VersionSummary {
-  const status: unknown = snap.get('activation.status')
+  const previous: unknown = snap.get('origin.previousWorkPlanId')
   return {
     id: snap.id,
     sequence: sequenceOf(snap),
     registrationStatus: snap.get('registrationStatus') === 'finalized' ? 'finalized' : 'in-registration',
-    activationStatus: status === 'active' || status === 'superseded' || status === 'pending-decision' ? status : null,
+    activationStatus: parseStoredActivation(snap.get('activation.status')),
+    previousWorkPlanId: isVersionId(previous) ? previous : null,
+  }
+}
+const isoOf = (value: unknown) => (value && typeof (value as { toDate?: unknown }).toDate === 'function' ? (value as { toDate(): Date }).toDate().toISOString() : null)
+/** Estado CONFIRMADO de uma versão finalizada (resposta da finalização e de seus reenvios). */
+function finalizedState(snap: DocumentSnapshot, revision: number) {
+  const sequence = sequenceOf(snap)
+  const status = parseStoredActivation(snap.get('activation.status'))
+  return {
+    id: snap.id,
+    revision,
+    registrationStatus: 'finalized' as const,
+    sequence,
+    activationStatus: sequence === 1 ? (status === 'superseded' ? 'superseded' : 'original-current') : status,
+    supersededWorkPlanId: (snap.get('activation.supersededWorkPlanId') as string | undefined) ?? null,
+    activatedAt: isoOf(snap.get('activation.activatedAt')),
+    effectiveDate: sequence > 1 ? (storedAct(snap)?.effectiveDate ?? null) : null,
   }
 }
 
@@ -231,13 +250,6 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
       const now = FieldValue.serverTimestamp()
 
       // ------------------------------------------------------------- versionamento
-      if (request.kind === 'activate') {
-        if (!planSnap?.exists || workPlanId === ORIGINAL_WORK_PLAN_ID) throw new Outcome(json(404, { error: 'not-found' }))
-        const decision = decideActivation(context, partnership.administrativeStatus)
-        if (!decision.allowed) throw deny(decision.reason)
-        throw new Outcome(json(500, { error: 'internal' })) // inalcançável enquanto a regra não for homologada
-      }
-
       if (request.kind === 'create-version') {
         const all = await tx.get(plans.limit(MAX_VERSIONS))
         // Reenvio do MESMO pedido: devolve a versão já criada.
@@ -260,7 +272,8 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
           // Cadeia formal (DEC-034): origem, anterior e base copiada; NÃO é validação jurídica.
           origin: { kind: 'formal-alteration', formalVersion: true, sequence, sourceWorkPlanId: ORIGINAL_WORK_PLAN_ID, previousWorkPlanId: request.baseWorkPlanId, baseRevision: request.baseRevision },
           formalAct: { ...act.act, declaredBy: uid, declaredAt: now, automatedVerification: false },
-          activation: { status: 'pending-decision' },
+          // DEC-PT-003: em cadastramento ainda NÃO é vigente; a finalização a ativará.
+          activation: { status: 'awaiting-finalization' },
           registrationStatus: 'in-registration',
           // Cópia INTEGRAL da versão vigente (valores corrigidos inclusive), com estados de informação.
           values: storedValues(baseSnap, today),
@@ -286,7 +299,8 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
           return json(200, { ok: true, changed: false, workPlan: summary })
         }
         if (request.kind === 'finalize' && registration === 'finalized' && planSnap.get('finalizationRequestId') === requestId && planSnap.get('finalizedBy') === uid) {
-          return json(200, { ok: true, finalized: false, workPlan: summary })
+          // Reenvio: devolve o estado já confirmado (sem nova ativação, eventos ou revisão).
+          return json(200, { ok: true, finalized: false, workPlan: finalizedState(planSnap, current) })
         }
         if (request.kind === 'correct') {
           // Evento com ID determinístico por usuário e pedido: marcador de idempotência e registro append-only.
@@ -392,7 +406,21 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
       }
 
       // Finalização interna (DEC-038/PT-001): requisitos do Plano e, nas versões posteriores, do ato formal.
-      const check = checkVersionFinalization(values, partnership, sequenceOf(snap) > 1 ? storedAct(snap) : null, today)
+      const sequence = sequenceOf(snap)
+      // DEC-PT-003: versão posterior → a origem precisa ser a vigente; leitura de TODAS as versões
+      // nesta transação (pedidos concorrentes conflitam e são repetidos pelo Firestore).
+      let supersededId: string | null = null
+      let supersededSnap: DocumentSnapshot | undefined
+      if (sequence > 1) {
+        const all = await tx.get(plans.limit(MAX_VERSIONS))
+        const docs = all.docs.filter((d) => d.get('partnershipId') === partnershipId)
+        const chain = checkActivationChain(docs.map(summaryOf), workPlanId)
+        if (!chain.ok) throw deny(chain.reason)
+        supersededId = chain.supersededId
+        supersededSnap = docs.find((d) => d.id === supersededId)
+      }
+      const act = sequence > 1 ? storedAct(snap) : null
+      const check = checkVersionFinalization(values, partnership, act, today)
       if (check.pending.length > 0) throw new Outcome(json(422, { error: 'finalization-pending', pending: check.pending, warnings: check.warnings }))
       tx.update(planRef, {
         registrationStatus: 'finalized',
@@ -402,9 +430,50 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         finalizedBy: uid,
         updatedAt: now,
         updatedBy: uid,
+        ...(supersededId
+          ? { activation: { status: 'active', rule: 'DEC-PT-003', activatedAt: now, activatedBy: uid, supersededWorkPlanId: supersededId, finalizationRequestId: requestId } }
+          : {}),
       })
-      tx.create(events.doc(), { action: 'finalize', oscId, partnershipId, workPlanId, actorUid: uid, actorAuthority: decision.authority, fromRevision: current, toRevision: current + 1, warnings: check.warnings.length, at: now })
-      return json(200, { ok: true, finalized: true, workPlan: { id: workPlanId, revision: current + 1, registrationStatus: 'finalized' }, warnings: check.warnings })
+      tx.create(events.doc(), { action: 'finalize', oscId, partnershipId, workPlanId, sequence, actorUid: uid, actorAuthority: decision.authority, requestId, fromRevision: current, toRevision: current + 1, warnings: check.warnings.length, at: now })
+      if (supersededId && supersededSnap) {
+        // Somente os metadados de vigência da versão substituída (sem revogação jurídica; valores intactos).
+        tx.update(supersededSnap.ref, {
+          'activation.status': 'superseded',
+          'activation.supersededAt': now,
+          'activation.supersededByWorkPlanId': workPlanId,
+        })
+        tx.create(events.doc(), {
+          action: 'version-activated',
+          rule: 'DEC-PT-003',
+          oscId,
+          partnershipId,
+          workPlanId,
+          sequence,
+          previousWorkPlanId: supersededId,
+          actorUid: uid,
+          actorAuthority: decision.authority,
+          requestId,
+          revision: current + 1,
+          effectiveDate: act?.effectiveDate ?? null,
+          effectsAtActivation: effectsStatus(act?.effectiveDate, today),
+          at: now,
+        })
+      }
+      return json(200, {
+        ok: true,
+        finalized: true,
+        workPlan: {
+          id: workPlanId,
+          revision: current + 1,
+          registrationStatus: 'finalized',
+          sequence,
+          activationStatus: supersededId ? 'active' : 'original-current',
+          supersededWorkPlanId: supersededId,
+          activatedAt: null, // hora do servidor gravada na transação; disponível na releitura
+          effectiveDate: act?.effectiveDate ?? null,
+        },
+        warnings: check.warnings,
+      })
     })
   } catch (error) {
     if (error instanceof Outcome) return error.response

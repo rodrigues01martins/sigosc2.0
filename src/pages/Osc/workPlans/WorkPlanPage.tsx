@@ -23,6 +23,7 @@ import {
   currentVersionId,
   decideVersionCreation,
   denialMessage,
+  effectsStatus,
   formalActTypeLabel,
   versionLabel,
   type FormalActErrorCode,
@@ -39,6 +40,7 @@ import { FormalActForm } from './FormalActForm.tsx'
 import { VersionComparison } from './VersionComparison.tsx'
 import { VersionHistory } from './VersionHistory.tsx'
 import { WorkPlanEditor } from './WorkPlanEditor.tsx'
+import { VIGENCY_BADGE, vigencyNotice } from './vigency.ts'
 
 interface Props {
   context: AuthorizationContext
@@ -180,13 +182,17 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   }
 
   const { partnership: p, versions } = state
-  // Critério de vigência (DEV-02.3): versão ativada de maior sequência; sem ativação (bloqueada), a original finalizada.
+  // Vigência cadastral (DEC-PT-003): derivada dos documentos de versão (fonte autoritativa; ver domínio).
   const currentId = currentVersionId(versions)
-  const pending = versions.find((v) => v.sequence > 1 && v.activationStatus === 'pending-decision' && v.registrationStatus === 'in-registration')
+  // Padrão: a versão em cadastramento (DEC-PT-004: no máximo uma); senão, a vigente.
+  const pending = versions.find((v) => v.sequence > 1 && v.registrationStatus === 'in-registration')
   const defaultId = pending?.id ?? currentId ?? versions[0]?.id ?? null
   const plan: WorkPlan | null = versions.find((v) => v.id === (selectedId ?? defaultId)) ?? versions[0] ?? null
   const currentPlan = versions.find((v) => v.id === currentId) ?? null
   const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions, currentId) : null
+  const today = todayInBrasilia()
+  const planVigency = plan ? activationStatusOf(plan, currentId) : 'in-registration'
+  const notice2 = plan ? vigencyNotice(plan, planVigency, versions, today) : null
   function selectVersion(id: string) {
     setSelectedId(id)
     setCorrecting(false)
@@ -225,7 +231,14 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
     setBusy(false)
     setConfirming(false)
     if (result.ok) {
-      setNotice({ kind: 'success', text: `Cadastro finalizado internamente e preservado.${result.warnings.length ? ` Pontos de conferência: ${result.warnings.join(' ')}` : ''}` })
+      const activated = result.activation
+      const effects = activated ? effectsStatus(activated.effectiveDate, todayInBrasilia()) : null
+      const head = activated
+        ? `Cadastro finalizado e ${versionLabel(activated.sequence)} ativada como vigente no SIGOSC; a ${versionLabel(versions.find((v) => v.id === activated.supersededWorkPlanId)?.sequence ?? 1).toLowerCase()} passa a constar como substituída e permanece preservada.${
+            effects === 'future' ? ` Início de efeitos administrativos previsto para ${formatDate(activated.effectiveDate as string)}.` : effects === 'not-informed' ? ' Data de produção de efeitos administrativos não informada.' : ''
+          } Não representa aprovação jurídica.`
+        : 'Cadastro finalizado internamente e preservado.'
+      setNotice({ kind: 'success', text: `${head}${result.warnings.length ? ` Pontos de conferência: ${result.warnings.join(' ')}` : ''}` })
     } else if (result.error === 'finalization-pending') {
       setNotice({ kind: 'error', text: `Finalização impedida: ${(result.pending ?? []).join(' ')}` })
     } else if (result.error === 'stale') {
@@ -327,8 +340,14 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
               <h2 id="osc05-versao-exibida" className={ds.sectionTitle}>
                 {versionLabel(plan.sequence)}
               </h2>
-              <span className={`${ds.badge} ${styles.situation}`}>{ACTIVATION_LABEL[activationStatusOf(plan, currentId)]}</span>
+              <span className={`${ds.badge} ${styles.situation} ${VIGENCY_BADGE[planVigency] ?? ''}`}>{ACTIVATION_LABEL[planVigency]}</span>
             </div>
+            {notice2 ? (
+              <p className={`${notice2.kind === 'warning' ? ds.warning : ds.info} ${styles.iconNote}`} role="note">
+                <InfoIcon />
+                <span>{notice2.text}</span>
+              </p>
+            ) : null}
             {plan.formalAct ? (
               <dl className={styles.dl}>
                 <div>
@@ -346,6 +365,12 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
                   <dt>Produção de efeitos</dt>
                   <dd>{plan.formalAct.effectiveDate ? formatDate(plan.formalAct.effectiveDate) : 'Não informada'}</dd>
                 </div>
+                {plan.activation.activatedAt ? (
+                  <div>
+                    <dt>Vigente no SIGOSC desde</dt>
+                    <dd>{formatTimestamp(plan.activation.activatedAt)} (finalização interna)</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Versão anterior</dt>
                   <dd>{plan.previousWorkPlanId === 'original' ? 'Versão original' : (plan.previousWorkPlanId ?? '—')}</dd>
@@ -360,7 +385,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             )}
             <p className={styles.hint}>
               {plan.sequence > 1
-                ? 'Ato formal declarado pelo usuário; o SIGOSC não o valida juridicamente e o documento não está armazenado. A vigência desta versão depende de decisão administrativa ainda não homologada.'
+                ? 'Ato formal declarado pelo usuário; o SIGOSC não o valida juridicamente e o documento não está armazenado. A vigência no SIGOSC é cadastral e não representa aprovação jurídica do ato.'
                 : 'A finalização interna não representa aprovação jurídica.'}
             </p>
             {plan.sequence > 1 && plan.registrationStatus === 'in-registration' && edit.allowed && !editingAct ? (
@@ -466,9 +491,11 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
                     <div className={ds.stack}>
                       <strong id="osc05-confirmar">Confirmar finalização interna</strong>
                       <span id="osc05-confirmar-texto">
-                        O cadastro estruturado do Plano de Trabalho de {partnershipTitle(p)} será preservado e não poderá ser alterado no SIGOSC.
-                        A finalização não representa aprovação jurídica nem oficial do Plano. Alterações formais futuras dependerão do
-                        versionamento, ainda não disponível.
+                        {plan.sequence > 1
+                          ? `A ${versionLabel(plan.sequence)} do Plano de Trabalho de ${partnershipTitle(p)} será preservada e passará a ser a vigente no SIGOSC; a ${currentPlan ? versionLabel(currentPlan.sequence).toLowerCase() : 'versão atual'} ficará registrada como substituída e continuará disponível para consulta.`
+                          : `O cadastro estruturado do Plano de Trabalho de ${partnershipTitle(p)} será preservado e não poderá ser alterado no SIGOSC.`}{' '}
+                        A finalização não representa aprovação jurídica nem oficial do Plano{plan.sequence > 1 ? ', e a vigência no SIGOSC é apenas cadastral' : ''}.
+                        Alterações formais posteriores são registradas como nova versão.
                       </span>
                       <div className={styles.actions}>
                         <button type="button" className={ds.linkButton} onClick={() => setConfirming(false)} disabled={busy}>

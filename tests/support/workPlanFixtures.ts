@@ -12,6 +12,8 @@ export interface WorkPlanFixture {
   /** DEV-02.3: sequência formal (1 = original). */
   sequence?: number
   formalAct?: Record<string, unknown>
+  /** `activation.status` gravado (padrão: em cadastramento → awaiting-finalization; finalizada → active). */
+  activation?: string | null
   createdBy?: string
 }
 
@@ -31,9 +33,11 @@ export function workPlanDocument(p: WorkPlanFixture) {
     ...(sequence > 1
       ? {
           formalAct: { type: 'termo-aditivo', typeDescription: null, reference: '1º Termo Aditivo', actDate: '2026-09-01', description: 'Ampliação fictícia do público.', effectiveDate: null, declaredBy: 'uid-ficticio-operator', declaredAt: CREATED, automatedVerification: false, ...p.formalAct },
-          activation: { status: 'pending-decision' },
+          activation: { status: p.activation === undefined ? (finalized ? 'active' : 'awaiting-finalization') : p.activation },
         }
-      : {}),
+      : p.activation
+        ? { activation: { status: p.activation } }
+        : {}),
     registrationStatus: p.status ?? 'in-registration',
     values: { ...emptyValues(), ...p.values },
     document: { status: 'not-stored', storagePath: null },

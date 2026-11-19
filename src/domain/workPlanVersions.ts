@@ -11,8 +11,10 @@
  *  C. nova versão por alteração formal (este módulo).
  *
  * Fontes: HF-G05 / PAG-OSC05 (JOR-06): "Registro de alteração já formalizada", "Ato formal: aditivo
- * ou apostilamento (obrigatório)", "Data da formalização (obrigatório)". O momento em que uma nova
- * versão passa a ser VIGENTE não está expressamente homologado: a ativação fica protegida.
+ * ou apostilamento (obrigatório)", "Data da formalização (obrigatório)".
+ * DEC-PT-003 (alt. B): a finalização interna de nova versão a ATIVA como referência cadastral.
+ * DEC-PT-004 (alt. A): uma única versão em cadastramento por parceria.
+ * DEC-PT-005 (alt. B): data de efeitos futura não impede a ativação cadastral; é sinalizada.
  */
 import { DENIAL_MESSAGE, evaluate, type AuthorizationContext } from './authorization.ts'
 import { allowsNewOperationalRecords, isValidDate, type AdministrativeStatus } from './partnerships.ts'
@@ -162,62 +164,161 @@ export function formalActErrorMessage(field: FormalActField | 'formalAct', code:
 }
 
 // ---------------------------------------------------------------------------
-// Situação de vigência (regra de ativação NÃO homologada → protegida)
+// Vigência cadastral (DEC-PT-003/004/005)
 // ---------------------------------------------------------------------------
 
 /**
- * - `original-current`: versão original finalizada, vigente no SIGOSC enquanto nenhuma versão
- *   posterior for ativada (único critério aplicável sem nova decisão administrativa);
- * - `pending-decision`: versão posterior registrada; sua vigência depende de decisão
- *   administrativa ainda não homologada (ativação bloqueada);
- * - `active` / `superseded`: estados PREPARADOS para quando a regra de ativação for aprovada.
+ * Situação de ativação GRAVADA em `activation.status` (somente o servidor grava):
+ * - `awaiting-finalization`: versão posterior em cadastramento (ainda não vigente);
+ * - `pending-decision`: LEGADO da DEV-02.3 (antes da DEC-PT-003). Em cadastramento, equivale a
+ *   `awaiting-finalization`; FINALIZADA, não é ativada retroativamente (aguarda regularização);
+ * - `active`: ativada na finalização interna (DEC-PT-003) e vigente no SIGOSC;
+ * - `superseded`: deixou de ser a referência cadastral vigente (não significa revogação jurídica).
+ * A versão original grava apenas `superseded` (quando substituída); antes disso, nada.
  */
-export type ActivationStatus = 'original-current' | 'pending-decision' | 'active' | 'superseded'
+export type StoredActivationStatus = 'awaiting-finalization' | 'pending-decision' | 'active' | 'superseded'
+
+export function parseStoredActivation(value: unknown): StoredActivationStatus | null {
+  return value === 'awaiting-finalization' || value === 'pending-decision' || value === 'active' || value === 'superseded' ? value : null
+}
+
+/** Situação APRESENTADA (derivada dos documentos; nunca informada pelo navegador). */
+export type ActivationStatus = 'in-registration' | 'original-current' | 'active' | 'superseded' | 'legacy-pending'
 
 export interface VersionSummary {
   readonly id: string
   readonly sequence: number
   readonly registrationStatus: WorkPlanRegistrationStatus
-  /** Somente versões posteriores gravam `activation.status`; o original não. */
-  readonly activationStatus: 'pending-decision' | 'active' | 'superseded' | null
+  readonly activationStatus: StoredActivationStatus | null
+  /** Versão de origem (somente versões posteriores). */
+  readonly previousWorkPlanId?: string | null
 }
 
+export type CurrentResolution =
+  | { readonly status: 'determined'; readonly id: string }
+  | { readonly status: 'none' }
+  | { readonly status: 'inconsistent' }
+
 /**
- * Critério EFETIVAMENTE utilizado: a versão vigente é a de maior sequência com ativação
- * registrada (`active`); na ausência de ativação, a versão original FINALIZADA. Como a
- * ativação está bloqueada, hoje a vigente é sempre a original finalizada (ou nenhuma).
+ * FONTE AUTORITATIVA da versão cadastralmente vigente: os próprios documentos de versão, lidos
+ * juntos (na mesma transação, no servidor). Vigente = a ÚNICA versão posterior `active`; sem
+ * nenhuma, a original FINALIZADA não substituída. Mais de uma `active`, ou original marcada como
+ * substituída sem sucessora ativa → `inconsistent` (nenhuma escolha por suposição).
  */
-export function currentVersionId(versions: readonly VersionSummary[]): string | null {
-  const active = versions.filter((v) => v.sequence > 1 && v.activationStatus === 'active').sort((a, b) => b.sequence - a.sequence)[0]
-  if (active) return active.id
+export function resolveCurrentVersion(versions: readonly VersionSummary[]): CurrentResolution {
+  const actives = versions.filter((v) => v.sequence > 1 && v.activationStatus === 'active')
+  if (actives.length > 1) return { status: 'inconsistent' }
+  const [active] = actives
+  if (active) return active.registrationStatus === 'finalized' ? { status: 'determined', id: active.id } : { status: 'inconsistent' }
   const original = versions.find((v) => v.sequence === 1)
-  return original?.registrationStatus === 'finalized' ? original.id : null
+  if (!original || original.registrationStatus !== 'finalized') return { status: 'none' }
+  if (original.activationStatus === 'superseded') return { status: 'inconsistent' }
+  return { status: 'determined', id: original.id }
+}
+
+export function currentVersionId(versions: readonly VersionSummary[]): string | null {
+  const resolution = resolveCurrentVersion(versions)
+  return resolution.status === 'determined' ? resolution.id : null
 }
 
 export function activationStatusOf(version: VersionSummary, current: string | null): ActivationStatus {
-  if (version.sequence === 1) return current === version.id ? 'original-current' : 'superseded'
-  return version.activationStatus ?? 'pending-decision'
+  if (version.registrationStatus === 'in-registration') return 'in-registration'
+  if (version.id === current) return version.sequence === 1 ? 'original-current' : 'active'
+  if (version.sequence > 1 && (version.activationStatus === 'pending-decision' || version.activationStatus === 'awaiting-finalization')) return 'legacy-pending'
+  return 'superseded'
 }
 
 export const ACTIVATION_LABEL: Record<ActivationStatus, string> = {
+  'in-registration': 'Em cadastramento: ainda não vigente',
   'original-current': 'Vigente no SIGOSC',
-  'pending-decision': 'Vigência não definida: aguarda decisão administrativa',
   active: 'Vigente no SIGOSC',
-  superseded: 'Substituída',
+  superseded: 'Substituída no SIGOSC',
+  'legacy-pending': 'Finalizada sem ativação: aguarda regularização',
+}
+
+// ---------------------------------------------------------------------------
+// Produção de efeitos administrativos (DEC-PT-005) — distinta da vigência cadastral
+// ---------------------------------------------------------------------------
+
+export type EffectsStatus = 'not-informed' | 'future' | 'reached'
+
+/**
+ * Compara DATAS CIVIS (AAAA-MM-DD). `today` deve ser a data civil de Brasília
+ * (America/Sao_Paulo), calculada no servidor ou por `todayInBrasilia` — nunca pelo fuso do navegador.
+ */
+export function effectsStatus(effectiveDate: string | null | undefined, today: string): EffectsStatus {
+  if (!effectiveDate) return 'not-informed'
+  return effectiveDate > today ? 'future' : 'reached'
+}
+
+// ---------------------------------------------------------------------------
+// Referência para registros futuros (DEC-039) — sem presumir eficácia jurídica
+// ---------------------------------------------------------------------------
+
+export interface VersionTimelineEntry extends VersionSummary {
+  readonly effectiveDate: string | null
+  readonly activatedAt: Date | null
+}
+
+export interface CurrentReference {
+  readonly status: 'determined' | 'none' | 'inconsistent'
+  readonly workPlanId: string | null
+  readonly sequence: number | null
+  /** Data/hora do servidor em que passou a ser a referência cadastral (null na original). */
+  readonly activatedAt: Date | null
+  /** Data de efeitos DECLARADA no ato (null = não informada; nunca presumida). */
+  readonly effectiveDate: string | null
+  readonly effects: EffectsStatus | 'not-applicable'
+}
+
+export function currentReference(versions: readonly VersionTimelineEntry[], today: string): CurrentReference {
+  const resolution = resolveCurrentVersion(versions)
+  if (resolution.status !== 'determined') return { status: resolution.status, workPlanId: null, sequence: null, activatedAt: null, effectiveDate: null, effects: 'not-applicable' }
+  const v = versions.find((x) => x.id === resolution.id) as VersionTimelineEntry
+  return {
+    status: 'determined',
+    workPlanId: v.id,
+    sequence: v.sequence,
+    activatedAt: v.sequence > 1 ? v.activatedAt : null,
+    effectiveDate: v.sequence > 1 ? v.effectiveDate : null,
+    effects: v.sequence > 1 ? effectsStatus(v.effectiveDate, today) : 'not-applicable',
+  }
+}
+
+export type ApplicableVersion =
+  | { readonly status: 'determined'; readonly workPlanId: string; readonly basis: 'effective-date' | 'before-first-alteration' }
+  | { readonly status: 'indeterminate'; readonly reason: 'inconsistent' | 'no-finalized-version' | 'legacy-pending' | 'effective-date-not-informed' | 'effective-dates-out-of-order' }
+
+/**
+ * Versão ADMINISTRATIVAMENTE aplicável numa data civil — somente quando determinável com
+ * segurança: todas as alterações ativadas precisam ter data de efeitos declarada e em ordem.
+ * A data de ativação cadastral NÃO é usada como data de eficácia. Na dúvida: `indeterminate`
+ * (o módulo consumidor deve exigir conferência). Antes dos efeitos da primeira alteração,
+ * aplica-se a original (o período anterior à aprovação do Plano não é avaliado aqui).
+ */
+export function applicableVersionOn(versions: readonly VersionTimelineEntry[], date: string): ApplicableVersion {
+  if (resolveCurrentVersion(versions).status === 'inconsistent') return { status: 'indeterminate', reason: 'inconsistent' }
+  if (versions.some((v) => activationStatusOf(v, null) === 'legacy-pending')) return { status: 'indeterminate', reason: 'legacy-pending' }
+  const original = versions.find((v) => v.sequence === 1 && v.registrationStatus === 'finalized')
+  if (!original) return { status: 'indeterminate', reason: 'no-finalized-version' }
+  const chain = versions.filter((v) => v.sequence > 1 && (v.activationStatus === 'active' || v.activationStatus === 'superseded')).sort((a, b) => a.sequence - b.sequence)
+  if (chain.some((v) => !v.effectiveDate)) return { status: 'indeterminate', reason: 'effective-date-not-informed' }
+  for (let i = 1; i < chain.length; i++) if ((chain[i]?.effectiveDate ?? '') < (chain[i - 1]?.effectiveDate ?? '')) return { status: 'indeterminate', reason: 'effective-dates-out-of-order' }
+  const applicable = chain.filter((v) => (v.effectiveDate as string) <= date).pop()
+  return applicable ? { status: 'determined', workPlanId: applicable.id, basis: 'effective-date' } : { status: 'determined', workPlanId: original.id, basis: 'before-first-alteration' }
 }
 
 // ---------------------------------------------------------------------------
 // Autorização das operações de versionamento
 // ---------------------------------------------------------------------------
 
-export type VersionDenial = WorkPlanDenial | 'base-not-current' | 'base-not-finalized' | 'pending-version-exists' | 'vigency-rule-pending'
+export type VersionDenial = WorkPlanDenial | 'base-not-current' | 'base-not-finalized' | 'pending-version-exists' | 'legacy-version-pending' | 'versions-inconsistent'
 export type VersionDecision = WorkPlanDecision | { readonly allowed: false; readonly reason: VersionDenial }
 
 /**
- * Criar nova versão (alteração formal): `work-plan.edit`; OSC sem suspensão comercial; parceria
- * não arquivada; base = versão VIGENTE identificada com segurança e finalizada; e nenhuma versão
- * posterior já registrada (no máximo uma versão pendente por vez — impede cadeias paralelas e
- * duas versões "vigentes" inadvertidas enquanto a regra de ativação não for homologada).
+ * Criar nova versão (alteração formal) — DEC-PT-004: `work-plan.edit`; OSC sem suspensão
+ * comercial; parceria não arquivada; base = versão VIGENTE (identificada com segurança) e
+ * finalizada; nenhuma versão em cadastramento; nenhuma versão LEGADA finalizada sem ativação.
  */
 export function decideVersionCreation(
   context: AuthorizationContext,
@@ -228,31 +329,37 @@ export function decideVersionCreation(
   const decision = evaluate(context, { kind: 'operate', permission: EDIT_PERMISSION })
   if (!decision.allowed) return decision
   if (!allowsNewOperationalRecords(partnershipStatus)) return { allowed: false, reason: 'partnership-archived' }
+  const resolution = resolveCurrentVersion(versions)
+  if (resolution.status === 'inconsistent') return { allowed: false, reason: 'versions-inconsistent' }
   const base = versions.find((v) => v.id === baseId)
   if (!base || base.registrationStatus !== 'finalized') return { allowed: false, reason: 'base-not-finalized' }
-  if (currentVersionId(versions) !== baseId) return { allowed: false, reason: 'base-not-current' }
-  if (versions.some((v) => v.sequence > base.sequence)) return { allowed: false, reason: 'pending-version-exists' }
+  if (versions.some((v) => v.registrationStatus === 'in-registration')) return { allowed: false, reason: 'pending-version-exists' }
+  if (versions.some((v) => activationStatusOf(v, null) === 'legacy-pending')) return { allowed: false, reason: 'legacy-version-pending' }
+  if (resolution.status !== 'determined' || resolution.id !== baseId) return { allowed: false, reason: 'base-not-current' }
   return decision
 }
 
 /**
- * Ativar uma versão como vigente: PREPARADO e BLOQUEADO. A regra que define quando uma versão
- * posterior passa a vigorar (finalização interna? data de efeitos? ato de terceiro?) não está
- * homologada; a operação é negada a todos depois das verificações comuns.
+ * Finalização de versão POSTERIOR = finalização + ativação cadastral (DEC-PT-003), numa só
+ * operação. Além das regras comuns da finalização, a versão de origem deve ser a vigente.
  */
-export function decideActivation(context: AuthorizationContext, partnershipStatus: AdministrativeStatus): VersionDecision {
-  const decision = evaluate(context, { kind: 'operate', permission: EDIT_PERMISSION })
-  if (!decision.allowed) return decision
-  if (!allowsNewOperationalRecords(partnershipStatus)) return { allowed: false, reason: 'partnership-archived' }
-  return { allowed: false, reason: 'vigency-rule-pending' }
+export function checkActivationChain(versions: readonly VersionSummary[], targetId: string): { readonly ok: true; readonly supersededId: string } | { readonly ok: false; readonly reason: VersionDenial } {
+  const resolution = resolveCurrentVersion(versions)
+  if (resolution.status === 'inconsistent') return { ok: false, reason: 'versions-inconsistent' }
+  const target = versions.find((v) => v.id === targetId)
+  if (!target || target.sequence <= 1) return { ok: false, reason: 'base-not-current' }
+  if (resolution.status !== 'determined' || target.previousWorkPlanId !== resolution.id) return { ok: false, reason: 'base-not-current' }
+  return { ok: true, supersededId: resolution.id }
 }
 
 export const VERSION_MESSAGE: Partial<Record<VersionDenial, string>> = {
   'base-not-finalized': 'A nova versão parte da versão vigente finalizada. Finalize o cadastro da versão vigente antes de registrar uma alteração formal.',
-  'base-not-current': 'A nova versão deve partir da versão vigente identificada. Recarregue a página e tente novamente.',
+  'base-not-current': 'A versão de origem não é mais a versão vigente no SIGOSC. Recarregue a página e confira as versões.',
   'pending-version-exists':
-    'Já existe uma versão posterior registrada cuja vigência aguarda decisão administrativa. Uma nova alteração formal só poderá ser registrada depois dessa definição.',
-  'vigency-rule-pending': 'A ativação de uma nova versão como vigente depende de decisão administrativa ainda não homologada.',
+    'Já existe uma versão em cadastramento. Finalize-a — a finalização a torna vigente no SIGOSC — antes de registrar nova alteração formal.',
+  'legacy-version-pending':
+    'Há versão finalizada antes da regra de ativação (DEC-PT-003) que não foi ativada. Nova alteração formal fica bloqueada até a regularização administrativa.',
+  'versions-inconsistent': 'Não foi possível identificar com segurança a versão vigente. Nenhuma alteração foi feita; procure o suporte.',
 }
 
 /** Finalização de versão posterior: requisitos do Plano + ato formal válido (H: tipo e data). */
