@@ -3,7 +3,7 @@ import { mapFirestoreError } from '../organizations/errors.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
 import { PARTNERSHIP_ID_PATTERN } from '../partnerships/types.ts'
 import { isVersionId } from '../../domain/workPlanVersions.ts'
-import { parseComponents, parseWorkPlan } from './parsing.ts'
+import { parseComponents, parseFinancial, parseWorkPlan } from './parsing.ts'
 import type { WorkPlan, WorkPlanService } from './types.ts'
 
 export interface WorkPlansSdk<TDb> {
@@ -12,11 +12,13 @@ export interface WorkPlansSdk<TDb> {
   listWorkPlans(db: TDb, oscId: string, partnershipId: string): Promise<RawDocument[]>
   /** DEV-02.4: metas e indicadores de uma versão. */
   listComponents(db: TDb, oscId: string, partnershipId: string, workPlanId: string): Promise<{ goals: RawDocument[]; indicators: RawDocument[] }>
+  /** DEV-02.5: categorias e itens do planejamento financeiro de uma versão. */
+  listFinancial(db: TDb, oscId: string, partnershipId: string, workPlanId: string): Promise<{ categories: RawDocument[]; items: RawDocument[] }>
 }
 
 export function createWorkPlanService<TDb>(db: TDb | null, sdk: WorkPlansSdk<TDb>): WorkPlanService {
   const unavailable = () => Promise.resolve({ ok: false as const, error: 'unknown' as const })
-  if (db === null) return { available: false, get: unavailable, listVersions: unavailable, listComponents: unavailable }
+  if (db === null) return { available: false, get: unavailable, listVersions: unavailable, listComponents: unavailable, listFinancial: unavailable }
   const instance: TDb = db
   return {
     available: true,
@@ -45,6 +47,15 @@ export function createWorkPlanService<TDb>(db: TDb | null, sdk: WorkPlansSdk<TDb
       try {
         const raw = await sdk.listComponents(instance, oscId, partnershipId, workPlanId)
         return { ok: true, data: parseComponents(raw, oscId, partnershipId, workPlanId) }
+      } catch (error) {
+        return { ok: false, error: mapFirestoreError(error) }
+      }
+    },
+    async listFinancial(oscId, partnershipId, workPlanId) {
+      if (!PARTNERSHIP_ID_PATTERN.test(partnershipId) || !isVersionId(workPlanId)) return { ok: true, data: { categories: [], items: [], discarded: 0 } }
+      try {
+        const raw = await sdk.listFinancial(instance, oscId, partnershipId, workPlanId)
+        return { ok: true, data: parseFinancial(raw, oscId, partnershipId, workPlanId) }
       } catch (error) {
         return { ok: false, error: mapFirestoreError(error) }
       }

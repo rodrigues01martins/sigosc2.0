@@ -332,6 +332,10 @@ export type VersionDenial =
   | 'transcription-not-open'
   /** DEC-PT-007: componentes alterados depois da conferência exibida. */
   | 'components-changed'
+  /** DEV-02.5: instrumento sem transferência de recursos (Acordo de Cooperação). */
+  | 'financial-not-applicable'
+  /** DEV-02.5: planejamento financeiro em versão FINALIZADA — sem regra de incorporação (aguarda decisão). */
+  | 'financial-transcription-pending'
 export type VersionDecision = WorkPlanDecision | { readonly allowed: false; readonly reason: VersionDenial }
 
 /**
@@ -390,6 +394,9 @@ export const VERSION_MESSAGE: Partial<Record<VersionDenial, string>> = {
   'transcription-closed': 'A incorporação complementar desta versão já foi encerrada; não são admitidas novas alterações.',
   'transcription-not-open': 'Não há incorporação complementar em andamento nesta versão.',
   'components-changed': 'Metas ou indicadores foram alterados depois da conferência exibida. Os dados foram recarregados; confira novamente.',
+  'financial-not-applicable': 'Planejamento financeiro não se aplica: o instrumento não envolve transferência de recursos financeiros.',
+  'financial-transcription-pending':
+    'Esta versão já foi finalizada. A inclusão de planejamento financeiro em Plano finalizado não está autorizada (a incorporação complementar da DEC-PT-006 vale só para metas e indicadores) e depende de decisão administrativa.',
 }
 
 /** Finalização de versão posterior: requisitos do Plano + ato formal válido (H: tipo e data). */

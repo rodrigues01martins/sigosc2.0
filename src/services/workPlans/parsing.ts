@@ -4,7 +4,8 @@ import { FORMAL_ACT_TYPES, isVersionId, parseStoredActivation, type FormalActTyp
 import { FIELD_IDS, ORIGINAL_WORK_PLAN_ID, emptyValues, parseFieldValue } from '../../domain/workPlans.ts'
 import type { RawDocument } from '../organizations/parsing.ts'
 import { isComponentId, parseReview, validateGoal, validateIndicator, type GoalData, type IndicatorData } from '../../domain/workPlanComponents.ts'
-import type { ComponentRecord, PlanComponents, WorkPlan } from './types.ts'
+import { isFinancialId, validateFinancialCategory, validateFinancialItem, type FinancialCategoryData, type FinancialItemData, type FinStatus } from '../../domain/workPlanFinancial.ts'
+import type { ComponentRecord, FinancialRecord, PlanComponents, PlanFinancial, WorkPlan } from './types.ts'
 
 const PATH = /^oscs\/([^/]+)\/partnerships\/([^/]+)\/workPlans\/([^/]+)$/
 
@@ -140,4 +141,37 @@ export function parseComponents(raw: { goals: RawDocument[]; indicators: RawDocu
   }
   const byOrder = <T extends { data: { order: number; code: string } }>(a: T, b: T) => a.data.order - b.data.order || a.data.code.localeCompare(b.data.code, 'pt-BR', { numeric: true })
   return { goals: goals.sort(byOrder), indicators: indicators.sort(byOrder), discarded }
+}
+
+/**
+ * Planejamento financeiro de UMA versão (DEV-02.5), revalidado com o domínio do servidor. Documento
+ * fora do caminho/formato é DESCARTADO (falha fechada); item com categoria inexistente na versão também.
+ */
+export function parseFinancial(raw: { categories: RawDocument[]; items: RawDocument[] }, oscId: string, partnershipId: string, workPlanId: string): PlanFinancial {
+  const prefix = `oscs/${oscId}/partnerships/${partnershipId}/workPlans/${workPlanId}/`
+  let discarded = 0
+  const meta = (d: RawDocument, collection: string, letter: 'c' | 'f') => {
+    const id = d.path.slice(prefix.length + collection.length + 1)
+    const ok = d.path.startsWith(`${prefix}${collection}/`) && isFinancialId(id) && id.startsWith(`${letter}_`) && d.data.oscId === oscId && d.data.partnershipId === partnershipId && d.data.workPlanId === workPlanId
+    const revision = typeof d.data.revision === 'number' && Number.isSafeInteger(d.data.revision) && d.data.revision >= 1 ? d.data.revision : 1
+    const inherited = (d.data.inheritedFrom as Record<string, unknown> | null | undefined)?.workPlanId
+    return ok ? { id, revision, inheritedFrom: isVersionId(inherited) ? inherited : null } : null
+  }
+  const categories: FinancialRecord<FinancialCategoryData>[] = []
+  for (const d of raw.categories) {
+    const m = meta(d, 'financialCategories', 'c')
+    const v = m ? validateFinancialCategory(d.data.data) : null
+    if (m && v?.ok) categories.push({ ...m, kind: 'financial-category', data: v.data })
+    else discarded++
+  }
+  const known = new Map<string, FinStatus>(categories.map((c) => [c.id, 'active']))
+  const items: FinancialRecord<FinancialItemData>[] = []
+  for (const d of raw.items) {
+    const m = meta(d, 'financialItems', 'f')
+    const v = m ? validateFinancialItem(d.data.data, known) : null
+    if (m && v?.ok) items.push({ ...m, kind: 'financial-item', data: v.data })
+    else discarded++
+  }
+  const byOrder = <T extends { data: { order: number; code: string } }>(a: T, b: T) => a.data.order - b.data.order || a.data.code.localeCompare(b.data.code, 'pt-BR', { numeric: true })
+  return { categories: categories.sort(byOrder), items: items.sort(byOrder), discarded }
 }

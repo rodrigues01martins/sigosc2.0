@@ -3,7 +3,7 @@ import { InfoIcon, LayersIcon, LockIcon } from '../../../components/ds/icons.tsx
 import ds from '../../../components/ds/ds.module.css'
 import { ContextBar } from '../../../components/osc/ContextBar.tsx'
 import { DENIAL_MESSAGE, evaluate, type AuthorizationContext } from '../../../domain/authorization.ts'
-import { CONSULT_PERMISSION, hasFinancialTransfer, instrumentOf, partnershipTitle } from '../../../domain/partnerships.ts'
+import { CONSULT_PERMISSION, instrumentOf, partnershipTitle } from '../../../domain/partnerships.ts'
 import {
   FIELD_DEFINITIONS as FIELDS,
   GROUPS,
@@ -40,6 +40,7 @@ import { FormalActForm } from './FormalActForm.tsx'
 import { VersionComparison } from './VersionComparison.tsx'
 import { VersionHistory } from './VersionHistory.tsx'
 import { ComponentReviewFields } from './ComponentReviewFields.tsx'
+import { FinancialPlanning } from './FinancialPlanning.tsx'
 import { PlanComponents } from './PlanComponents.tsx'
 import { TranscriptionPanel } from './TranscriptionPanel.tsx'
 import { emptyReview, reviewFromDraft, type ReviewDraft } from './componentForm.ts'
@@ -499,12 +500,16 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             onChanged={refresh}
           />
 
-          <section className={ds.card} aria-labelledby="osc05-financeiro">
-            <h2 id="osc05-financeiro" className={ds.sectionTitle}>
-              Planejamento financeiro
-            </h2>
-            <p className={ds.muted}>{hasFinancialTransfer(p.instrument) ? 'Estruturação em incremento futuro. Nenhum valor foi registrado.' : 'Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros.'}</p>
-          </section>
+          <FinancialPlanning
+            key={`f-${plan.id}`}
+            context={context}
+            partnershipId={partnershipId}
+            plan={plan}
+            instrument={p.instrument}
+            canEdit={plan.registrationStatus === 'in-registration' && edit.allowed}
+            editDenial={edit.allowed ? null : denialText(edit, 'Você pode consultar o planejamento financeiro, mas não possui autorização para alterá-lo.')}
+            onNotice={setNotice}
+          />
 
           {plan.registrationStatus === 'in-registration' && check ? (
             <section className={ds.card} aria-labelledby="osc05-finalizacao">

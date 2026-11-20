@@ -20,7 +20,31 @@ export interface WorkPlanFixture {
   transcription?: { status: 'open' | 'closed'; revision?: number }
   goals?: readonly ComponentFixture[]
   indicators?: readonly ComponentFixture[]
+  /** DEV-02.5: planejamento financeiro PREVISTO desta versão (dados fictícios). */
+  financialCategories?: readonly ComponentFixture[]
+  financialItems?: readonly ComponentFixture[]
 }
+
+/** Categoria financeira fictícia (sobrescrevível). */
+export const categoryData = (code: string, name: string, standardCategory: string | null = null, extra: Record<string, unknown> = {}) => ({ code, name, standardCategory, status: 'active', order: 0, ...extra })
+
+/** Item de planejamento fictício (valor previsto em CENTAVOS; sobrescrevível). */
+export const itemData = (code: string, categoryId: string, plannedCents: number | null, extra: Record<string, unknown> = {}) => ({
+  code,
+  categoryId,
+  description: `Item fictício ${code}`,
+  unit: { state: 'not-informed' },
+  quantity: { state: 'not-informed' },
+  unitValue: { state: 'not-informed' },
+  plannedValue: plannedCents === null ? { state: 'not-informed' } : { state: 'informed', cents: plannedCents },
+  fundingSource: null,
+  period: { state: 'not-informed' },
+  details: { state: 'not-informed' },
+  calculationMemory: { state: 'not-informed' },
+  status: 'active',
+  order: 0,
+  ...extra,
+})
 
 export interface ComponentFixture {
   id: string
@@ -65,7 +89,7 @@ export const indicatorData = (code: string, goalIds: string[] = [], extra: Recor
   ...extra,
 })
 
-export function componentDocument(kind: 'goal' | 'indicator', c: ComponentFixture, p: { oscId: string; partnershipId: string; workPlanId: string }) {
+export function componentDocument(kind: 'goal' | 'indicator' | 'financial-category' | 'financial-item', c: ComponentFixture, p: { oscId: string; partnershipId: string; workPlanId: string }) {
   return {
     id: c.id,
     kind,

@@ -1,4 +1,5 @@
 import type { ComponentReview, GoalData, IndicatorData, Stored } from '../../domain/workPlanComponents.ts'
+import type { FinancialCategoryData, FinancialItemData, FinStored } from '../../domain/workPlanFinancial.ts'
 import type { FormalAct, StoredActivationStatus } from '../../domain/workPlanVersions.ts'
 import type { WorkPlanRegistrationStatus, WorkPlanValues } from '../../domain/workPlans.ts'
 import type { PartnershipErrorKind } from '../partnerships/types.ts'
@@ -61,6 +62,18 @@ export interface WorkPlanService {
   listVersions(oscId: string, partnershipId: string): Promise<WorkPlanResult<readonly WorkPlan[]>>
   /** DEV-02.4: metas e indicadores PREVISTOS de uma versão (componentes inválidos são descartados). */
   listComponents(oscId: string, partnershipId: string, workPlanId: string): Promise<WorkPlanResult<PlanComponents>>
+  /** DEV-02.5: planejamento financeiro PREVISTO de uma versão (registros inválidos são descartados). */
+  listFinancial(oscId: string, partnershipId: string, workPlanId: string): Promise<WorkPlanResult<PlanFinancial>>
+}
+
+/** Planejamento financeiro de UMA versão (DEV-02.5). Somente valores previstos. */
+export interface PlanFinancial {
+  readonly categories: readonly FinancialRecord<FinancialCategoryData>[]
+  readonly items: readonly FinancialRecord<FinancialItemData>[]
+  readonly discarded: number
+}
+export interface FinancialRecord<T> extends FinStored<T> {
+  readonly inheritedFrom: string | null
 }
 
 /** Componentes de planejamento de UMA versão (DEV-02.4). Não há valores realizados. */

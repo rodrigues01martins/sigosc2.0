@@ -191,6 +191,30 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(delegate.doc(`${plan}/goals/g_0123456789abcdef0123`).set({ data: {} }))
   })
 
+  test('DEV-02.5 (regra) — planejamento financeiro: leitura com work-plan.view; nenhuma escrita; sem acesso entre OSCs', async () => {
+    const base = `oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/original`
+    const category = `${base}/financialCategories/c_0123456789abcdef0123`
+    const item = `${base}/financialItems/f_0123456789abcdef0123`
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const db = admin.firestore()
+      await db.doc(base).set(workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1' }))
+      await db.doc(category).set({ id: 'c_0123456789abcdef0123', oscId: ALFA, data: { code: 'C1' } })
+      await db.doc(item).set({ id: 'f_0123456789abcdef0123', oscId: ALFA, data: { code: 'F1' } })
+      await db.doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit', 'financial.view'] })
+      await db.doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.OPERATOR.uid })).update({ permissions: ['financial.view'] })
+    })
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(category).get())
+    assert.equal((await assertSucceeds(delegate.collection(`${base}/financialItems`).get())).size, 1)
+    await assertFails(as(PERMISSION_USERS.OPERATOR.uid).doc(item).get()) // financial.view não substitui work-plan.view
+    for (const path of [category, item]) {
+      await assertFails(delegate.doc(path).update({ data: { code: 'X' } }))
+      await assertFails(delegate.doc(path).delete())
+    }
+    await assertFails(delegate.collection(`${base}/financialItems`).add({ data: {} }))
+    await assertFails(as(USERS.SINGLE.uid).doc(item).get())
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())

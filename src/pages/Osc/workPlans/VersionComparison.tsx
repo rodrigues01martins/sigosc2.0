@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import ds from '../../../components/ds/ds.module.css'
 import { DIFF_LABEL, FIELD_LABEL, diffVersions, isMaterialDiff, versionLabel } from '../../../domain/workPlanVersions.ts'
 import { COMPONENT_DIFF_LABEL, GOAL_FIELD_LABEL, INDICATOR_FIELD_LABEL, diffComponents, type ComponentDiff } from '../../../domain/workPlanComponents.ts'
+import { CATEGORY_FIELD_LABEL, FIN_DIFF_LABEL, ITEM_FIELD_LABEL, diffFinancial, formatCents, type FinDiff } from '../../../domain/workPlanFinancial.ts'
 import { FIELD_DEFINITIONS } from '../../../domain/workPlans.ts'
 import { useWorkPlanDependencies } from '../../../hooks/workPlansContext.ts'
 import type { WorkPlan } from '../../../services/workPlans/types.ts'
@@ -30,6 +31,8 @@ export function VersionComparison({ oscId, partnershipId, versions, beforeId, af
   const { service } = useWorkPlanDependencies()
   // DEV-02.4: metas e indicadores comparados pelo identificador LÓGICO (mantido entre versões).
   const [components, setComponents] = useState<{ key: string; diffs: readonly ComponentDiff[] | null } | null>(null)
+  // DEV-02.5: planejamento financeiro comparado pelo ID lógico (valor ≠ descrição).
+  const [financial, setFinancial] = useState<{ key: string; diffs: readonly FinDiff[] | null } | null>(null)
   const key = `${beforeId}|${afterId}`
   useEffect(() => {
     let alive = true
@@ -37,10 +40,16 @@ export function VersionComparison({ oscId, partnershipId, versions, beforeId, af
       if (!alive) return
       setComponents({ key, diffs: b.ok && a.ok ? [...diffComponents('goal', b.data.goals, a.data.goals), ...diffComponents('indicator', b.data.indicators, a.data.indicators)] : null })
     })
+    void Promise.all([service.listFinancial(oscId, partnershipId, beforeId), service.listFinancial(oscId, partnershipId, afterId)]).then(([b, a]) => {
+      if (!alive) return
+      setFinancial({ key, diffs: b.ok && a.ok ? [...diffFinancial('financial-category', b.data.categories, a.data.categories), ...diffFinancial('financial-item', b.data.items, a.data.items)] : null })
+    })
     return () => {
       alive = false
     }
   }, [service, oscId, partnershipId, beforeId, afterId, key])
+  const financialDiffs = financial?.key === key ? financial.diffs : undefined
+  const changedFinancial = financialDiffs?.filter((d) => d.diff !== 'unchanged') ?? []
   const componentDiffs = components?.key === key ? components.diffs : undefined
   const changedComponents = componentDiffs?.filter((d) => d.diff !== 'unchanged') ?? []
   const before = versions.find((v) => v.id === beforeId)
@@ -155,7 +164,58 @@ export function VersionComparison({ oscId, partnershipId, versions, beforeId, af
             </div>
           )}
           {changedComponents.length > 0 && componentDiffs ? <p className={styles.hint}>{componentDiffs.length - changedComponents.length} componente(s) mantido(s).</p> : null}
-          <p className={styles.hint}>Planejamento financeiro ainda não é estruturado e não faz parte da comparação.</p>
+          <h3 className={ds.cardTitle} style={{ margin: 0 }}>
+            Planejamento financeiro previsto
+          </h3>
+          {financialDiffs === undefined ? (
+            <p className={ds.muted} role="status">
+              Comparando o planejamento financeiro…
+            </p>
+          ) : financialDiffs === null ? (
+            <p className={ds.error} role="alert">
+              Não foi possível consultar o planejamento financeiro das versões selecionadas.
+            </p>
+          ) : financialDiffs.length === 0 ? (
+            <p className={ds.muted}>Nenhuma categoria ou item financeiro registrado nas versões selecionadas.</p>
+          ) : changedFinancial.length === 0 ? (
+            <p className={ds.muted}>Planejamento financeiro mantido ({financialDiffs.length} registros).</p>
+          ) : (
+            <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Tabela de diferenças do planejamento financeiro">
+              <table className={styles.table} style={{ minWidth: 0 }}>
+                <caption className={ds.srOnly}>
+                  Planejamento financeiro: diferenças entre {versionLabel(before.sequence)} e {versionLabel(after.sequence)}
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Registro</th>
+                    <th scope="col">Diferença</th>
+                    <th scope="col">Campos alterados</th>
+                    <th scope="col">Valor previsto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changedFinancial.map((d) => (
+                    <tr key={`${d.kind}-${d.id}`}>
+                      <th scope="row">
+                        {d.kind === 'financial-category' ? 'Categoria' : 'Item'} {d.code}
+                      </th>
+                      <td>{FIN_DIFF_LABEL[d.diff]}</td>
+                      <td style={{ overflowWrap: 'anywhere' }}>{d.fields.length ? d.fields.map((f) => (d.kind === 'financial-category' ? CATEGORY_FIELD_LABEL : ITEM_FIELD_LABEL)[f as never] ?? f).join('; ') : '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {d.kind === 'financial-category'
+                          ? '—'
+                          : d.plannedDeltaCents !== null && d.plannedDeltaCents !== 0
+                            ? `${formatCents(d.beforeCents as number)} → ${formatCents(d.afterCents as number)}`
+                            : d.afterCents !== null
+                              ? formatCents(d.afterCents)
+                              : 'Não informado'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       ) : (
         <p className={ds.muted}>Selecione duas versões existentes.</p>

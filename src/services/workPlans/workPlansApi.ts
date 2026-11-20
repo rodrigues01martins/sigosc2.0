@@ -3,6 +3,7 @@
  * O cliente não decide autorização; falhas de infraestrutura nunca viram sucesso simulado.
  */
 import type { ComponentErrorCode, ComponentKind, ComponentReview, GoalData, IndicatorData } from '../../domain/workPlanComponents.ts'
+import type { FinErrorCode, FinancialCategoryData, FinancialItemData, FinancialKind } from '../../domain/workPlanFinancial.ts'
 import type { FormalAct, FormalActErrorCode, FormalActField, VersionDenial } from '../../domain/workPlanVersions.ts'
 import type { CorrectionErrorCode, CorrectionErrorKey, FieldErrorCode, FieldValue, WorkPlanDenial, WorkPlanField } from '../../domain/workPlans.ts'
 
@@ -19,6 +20,7 @@ export type WorkPlansApiError =
   | 'invalid-correction'
   | 'invalid-formal-act'
   | 'invalid-component'
+  | 'invalid-financial'
   | 'invalid-request'
   | 'unknown'
 
@@ -26,7 +28,7 @@ export type WorkPlansFailure = {
   readonly ok: false
   readonly error: WorkPlansApiError
   readonly reason?: WorkPlanDenial | VersionDenial
-  readonly fields?: Partial<Record<CorrectionErrorKey | FormalActField | 'formalAct' | string, FieldErrorCode | CorrectionErrorCode | FormalActErrorCode | ComponentErrorCode | 'required'>>
+  readonly fields?: Partial<Record<CorrectionErrorKey | FormalActField | 'formalAct' | string, FieldErrorCode | CorrectionErrorCode | FormalActErrorCode | ComponentErrorCode | FinErrorCode | 'required'>>
   readonly pending?: readonly string[]
 }
 /** DEC-PT-003: ativação cadastral confirmada pelo servidor na finalização de versão posterior. */
@@ -86,6 +88,10 @@ export interface WorkPlansApi {
   createComponent(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: ComponentKind; data: GoalData | IndicatorData }): Promise<ComponentResult>
   /** DEV-02.4: alterar meta ou indicador (componente completo; revisão conferida). */
   updateComponent(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: ComponentKind; componentId: string; expectedRevision: number; data: GoalData | IndicatorData }): Promise<ComponentResult>
+  /** DEV-02.5: cadastrar categoria ou item do planejamento financeiro PREVISTO. */
+  createFinancial(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: FinancialKind; data: FinancialCategoryData | FinancialItemData }): Promise<ComponentResult>
+  /** DEV-02.5: alterar categoria ou item (registro completo; revisão conferida). */
+  updateFinancial(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; kind: FinancialKind; id: string; expectedRevision: number; data: FinancialCategoryData | FinancialItemData }): Promise<ComponentResult>
 }
 
 interface Dependencies {
@@ -93,9 +99,10 @@ interface Dependencies {
   getIdToken(): Promise<string | null>
   endpoint?: string
   componentsEndpoint?: string
+  financialEndpoint?: string
 }
 
-export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-work-plans', componentsEndpoint = '/api/osc-work-plan-components' }: Dependencies): WorkPlansApi {
+export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-work-plans', componentsEndpoint = '/api/osc-work-plan-components', financialEndpoint = '/api/osc-work-plan-financial' }: Dependencies): WorkPlansApi {
   async function request(method: 'POST' | 'PATCH' | 'GET', payload: unknown, query = '', target = endpoint): Promise<{ ok: true; body: Record<string, unknown> } | WorkPlansFailure> {
     let token: string | null
     try {
@@ -146,6 +153,8 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
               ? { ok: false, error: 'invalid-formal-act', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
               : body.error === 'invalid-component'
                 ? { ok: false, error: 'invalid-component', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
+                : body.error === 'invalid-financial'
+                  ? { ok: false, error: 'invalid-financial', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
                 : { ok: false, error: 'invalid-values', fields: (body.fields ?? {}) as WorkPlansFailure['fields'] }
       case 400:
         return { ok: false, error: 'invalid-request' }
@@ -169,10 +178,10 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     return { ok: true, id: plan.id, revision: plan.revision, changed, warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [], activation }
   }
 
-  async function component(method: 'POST' | 'PATCH', payload: unknown): Promise<ComponentResult> {
-    const result = await request(method, payload, '', componentsEndpoint)
+  async function component(method: 'POST' | 'PATCH', payload: unknown, target = componentsEndpoint): Promise<ComponentResult> {
+    const result = await request(method, payload, '', target)
     if (!result.ok) return result
-    const c = result.body.component as Record<string, unknown> | undefined
+    const c = (result.body.component ?? result.body.record) as Record<string, unknown> | undefined
     if (typeof c?.id !== 'string' || typeof c.revision !== 'number') return { ok: false, error: 'unknown' }
     return { ok: true, id: c.id, revision: c.revision, changed: result.body.created === true || result.body.changed === true }
   }
@@ -192,6 +201,10 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
       component('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: r.kind === 'goal' ? 'create-goal' : 'create-indicator', data: r.data }),
     updateComponent: (r) =>
       component('PATCH', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, componentKind: r.kind, componentId: r.componentId, expectedRevision: r.expectedRevision, data: r.data }),
+    createFinancial: (r) =>
+      component('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: r.kind === 'financial-category' ? 'create-category' : 'create-item', data: r.data }, financialEndpoint),
+    updateFinancial: (r) =>
+      component('PATCH', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, kind: r.kind, id: r.id, expectedRevision: r.expectedRevision, data: r.data }, financialEndpoint),
     async history({ oscId, partnershipId, workPlanId }) {
       const result = await request('GET', null, `?${new URLSearchParams({ oscId, partnershipId, ...(workPlanId ? { workPlanId } : {}) }).toString()}`)
       if (!result.ok) return result

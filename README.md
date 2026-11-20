@@ -1248,6 +1248,94 @@ contagens, impressão digital, revisão); componentes com `procedure: 'complemen
 4. Com a incorporação aberta, conferir que "Registrar alteração formal" não é oferecido.
 5. Reversão: excluir componentes, o campo `complementaryTranscription`/`componentReview` criados e os eventos.
 
+### 11.14 Planejamento financeiro do Plano aprovado (DEV-02.5)
+
+**Escopo:** somente o **planejado**. Não há receitas recebidas, despesas, pagamentos, comprovantes, saldos,
+conciliação ou comparativo com o realizado (Gestão Financeira — PAG-OSC09 — é módulo futuro).
+
+**Referências verificadas:** HF-G05 / PAG-OSC05 etapa 3 ("Item F1 do planejamento financeiro (obrigatório)",
+"Valor previsto do item F1 (obrigatório)", "Itens do planejamento financeiro na nova versão"); PAG-OSC09
+("Modelo híbrido: categorias padronizadas e itens configurados no Plano de Trabalho"; categorias Recursos
+Humanos, Serviços de Terceiros, Material de Consumo e "Outras despesas"; Acordo de Cooperação "Sem transferência
+de recursos", contrapartida "Não se aplica"); PAG-OSC04 (valor global e contrapartida da parceria, DEC-PAR-005).
+DEC-021/051/052/053/059/062/063: **somente os títulos** disponíveis.
+
+**Matriz de campos** (H = homologado no protótipo; T = decisão técnica compatível; P = proposta sujeita à
+deliberação). Editáveis só na versão **em cadastramento**; congelados na finalização; **copiados integralmente**
+(mesmo ID lógico) na alteração formal; comparados campo a campo pelo ID lógico.
+
+| Entidade | Campo (`id`) | Tipo | Fonte | Obrigatório | Validação |
+| --- | --- | --- | --- | --- | --- |
+| Categoria | ID lógico (`c_…`) | gerado pelo servidor | T | — | estável entre versões |
+| Categoria | Código (`code`) | texto ≤ 20 | T | sim | único na versão |
+| Categoria | Nome (`name`) | texto ≤ 120 | H (nomes do protótipo) | sim | como no Plano aprovado |
+| Categoria | Categoria padronizada (`standardCategory`) | lista H ou nula | H (modelo híbrido) | não | nula = classificação própria do Plano |
+| Item | ID lógico (`f_…`), Código (`code`) | — / texto ≤ 20 | T / H ("F1") | — / sim | código único na versão |
+| Item | Categoria (`categoryId`) | ID da mesma versão | H | sim | uma categoria ativa (sem rateio) |
+| Item | Descrição (`description`) | texto ≤ 2000 | H | sim | — |
+| Item | Valor previsto (`plannedValue`) | centavos c/ estado | H ("Valor previsto") | não no cadastro | zero ≠ não informado ≠ não se aplica |
+| Item | Quantidade (`quantity`) | decimal exato (texto, ≤ 4 casas) c/ estado | T | não | não exigida para valor global |
+| Item | Valor unitário (`unitValue`) | centavos c/ estado | T | não | — |
+| Item | Unidade, período, detalhamento | texto c/ estado | P | não | — |
+| Item | Memória de cálculo (`calculationMemory`) | texto c/ estado | P | não | **nunca executada** |
+| Item | Fonte prevista (`fundingSource`) | repasse público / contrapartida / outra | P (DEC-052, título) | não | não é receita recebida |
+| Ambos | Situação na versão (`status`) | ativa / descontinuada | T | — | categoria com item ativo não é descontinuada |
+
+**Dinheiro e precisão:** valores em **centavos inteiros** (mesmo contrato do valor global da parceria); leitura do
+texto digitado sem ponto flutuante ("1.200" = mil e duzentos; "1.234,56"; mais de 2 casas é recusado, sem
+arredondamento); exibição `R$ 1.234,56` por inteiros; somas exatas (BigInt). Limite técnico por valor: R$ 1 trilhão
+(o mesmo da DEC-PAR-005). Quantidade decimal separada do dinheiro.
+
+**Derivado × declarado:** quantidade × valor unitário é calculado com exatidão (BigInt) e **oferecido** ao usuário
+("Usar R$ X como valor previsto"); nunca substitui o valor informado. Divergência ou produto sem centavos exatos =
+**aviso** (não bloqueio: não há regra homologada).
+
+**Totais:** derivados dos itens ativos (por categoria e do Plano), nunca persistidos; total "parcial" quando há itens
+sem valor informado. Referência preparada para a PAG-OSC09 (`plannedTotals`: previsto por categoria e por item).
+
+**Aplicabilidade:** derivada do instrumento cadastrado — Acordo de Cooperação = "não se aplica" (sem repasse zero);
+gravações recusadas (409 `financial-not-applicable`). Recursos ou responsabilidades **não financeiras** do AC não
+constam do modelo homologado: **não implementado** (pendência).
+
+**Firestore:** `…/workPlans/{versão}/financialCategories/{c_…}` e `…/financialItems/{f_…}` (`data`, `revision`,
+`inheritedFrom`, `creationRequestId`, `lastUpdateRequestId`, autoria e datas do servidor). Limites técnicos: 30 categorias
+e 150 itens por versão — com 100 metas e 200 indicadores, a cópia da versão soma 480 gravações + versão + evento,
+**testada** numa única transação (máximo 500). Ampliar exigiria cópia em lotes com marcador de conclusão.
+
+**Servidor — `/api/osc-work-plan-financial`** (`work-plan.edit`): `POST {action:'create-category'|'create-item', data}`;
+`PATCH {kind:'financial-category'|'financial-item', id, expectedRevision, data}`. Transação com releitura de categorias e
+itens, validação, código único, limites, integridade, revisão (409 `stale`), idempotência por usuário e pedido, evento
+`financial-category|item-created|updated` (campos alterados, mudança de valor previsto e de categoria antes/depois,
+situação). `financial.view`/`financial.edit` (gestão operacional) **não** autorizam alterar o Plano.
+
+**Versões:** `create-version` copia categorias e itens com os mesmos IDs lógicos (junto de metas e indicadores);
+a comparação distingue alteração de **valor** (antes → depois) de alteração de **descrição**.
+
+**Planos já finalizados:** inclusão de planejamento financeiro **bloqueada** (409 `financial-transcription-pending`),
+inclusive durante a incorporação da DEC-PT-006 (que vale só para metas e indicadores); a correção material não aceita
+itens. **Finalização e conferência:** contrato da DEV-02.4-C01 inalterado; a conferência financeira **não** foi tornada
+obrigatória (sem regra aprovada) — itens sem valor geram apenas pontos de atenção.
+
+**Interface (PAG-OSC05):** seção "Planejamento financeiro previsto" (categorias, itens, subtotais e total; cartões em
+telas estreitas), formulários de categoria e item com moeda brasileira, comparação entre versões. Nenhum saldo,
+receita ou despesa.
+
+**Pendências administrativas:** (1) incorporação complementar de planejamento financeiro em Planos já finalizados
+(proposta DEC-PT-011); (2) se a conferência financeira passa a ser obrigatória na finalização e com que critério;
+(3) regra para divergência entre quantidade × valor unitário e o valor previsto (alerta ou bloqueio) e arredondamento;
+(4) taxonomia definitiva de categorias (DEC-051) e fontes previstas (DEC-052); (5) estrutura não financeira do Acordo
+de Cooperação; (6) obrigatoriedade do valor previsto na finalização (o protótipo marca "obrigatório").
+
+**Validação no Preview (Firebase de testes)**
+1. Confirmar o projeto (`firebase projects:list`) e publicar `firestore.rules` **somente** no `sigorsc-testes`
+   (`firebase deploy --only firestore:rules --project sigorsc-testes`): incluem as leituras de `goals`/`indicators`
+   (DEV-02.4) e `financialCategories`/`financialItems` (DEV-02.5).
+2. Implantar `/api/osc-work-plans`, `/api/osc-work-plan-components` e a nova `/api/osc-work-plan-financial`.
+3. Termo de Colaboração com Plano em cadastramento: "Adicionar categoria" → "Adicionar item" (quantidade, valor
+   unitário, "Usar R$ … como valor previsto") → conferir totais; Firestore: `financialCategories`/`financialItems` e eventos.
+4. Finalizar (com a conferência de metas e indicadores) → registrar alteração formal → alterar um valor na Versão 2 →
+   "Comparar com a anterior". Acordo de Cooperação: "não se aplica". Reversão: excluir os documentos e eventos criados.
+
 ## 12. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
@@ -1284,7 +1372,9 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Regularização de versões legadas finalizadas sem ativação | **Bloqueada** (aguarda decisão administrativa específica) |
 | Metas, indicadores e resultados previstos por versão (DEV-02.4; PAG-OSC05 e consulta na PAG-OSC08) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
 | Incorporação complementar (DEC-PT-006), conferência na finalização (DEC-PT-007), periodicidade justificada (DEC-PT-009) | Implementado (DEV-02.4-C01); validado em emuladores; **não validado no Preview** |
-| Apuração, avaliação, prorrogações, execução, financeiro, prestação de contas | Não iniciados |
+| Planejamento financeiro previsto por versão (DEV-02.5; PAG-OSC05) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
+| Planejamento financeiro em Plano já finalizado | **Bloqueado** (aguarda decisão administrativa) |
+| Apuração, avaliação, prorrogações, execução, gestão financeira operacional, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
 Próximas etapas dependem de nova autorização.

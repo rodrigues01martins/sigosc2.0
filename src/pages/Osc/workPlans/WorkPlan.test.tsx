@@ -8,11 +8,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { memberDocument, memberPath, OSCS, USERS } from '../../../../tests/support/organizationFixtures.ts'
 import { PERMISSION_USERS } from '../../../../tests/support/permissionFixtures.ts'
 import { renderOscApp, type RenderOptions } from '../../../../tests/support/renderOscApp.tsx'
-import { goalData, indicatorData } from '../../../../tests/support/workPlanFixtures.ts'
+import { categoryData, goalData, indicatorData, itemData } from '../../../../tests/support/workPlanFixtures.ts'
 
+const originalMatchMedia = window.matchMedia
 afterEach(() => {
   cleanup()
   window.location.hash = ''
+  // Um teste de responsividade simula tela estreita: restaurado para não vazar para os demais.
+  window.matchMedia = originalMatchMedia
 })
 
 const OP = PERMISSION_USERS.OPERATOR
@@ -475,7 +478,7 @@ describe('Versionamento do Plano (DEV-02.3)', () => {
     expect(rows.some((t) => /Público atendido.*Crianças.*Crianças e adolescentes.*Alterado/.test(t ?? ''))).toBe(true)
     expect(rows.some((t) => /Incluído/.test(t ?? ''))).toBe(true)
     expect(screen.getByText(/2 campos com diferença; 8 mantidos/)).toBeTruthy()
-    expect(screen.getByText(/Planejamento financeiro ainda não é estruturado e não faz parte da comparação/)).toBeTruthy()
+    expect(await screen.findByText('Nenhuma categoria ou item financeiro registrado nas versões selecionadas.')).toBeTruthy()
     // T22 (consulta): só view — sem registrar alteração formal.
     expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Fechar comparação' }))
@@ -801,5 +804,107 @@ describe('Consolidação de metas e indicadores (DEV-02.4-C01)', () => {
     expect(screen.getByText(/Ao salvar como qualitativo, deixarão de valer: Tipo de resultado numérico; Resultado previsto \(valor-alvo\); Unidade de medida; Método/)).toBeTruthy()
     fireEvent.click(screen.getByRole('radio', { name: 'Quantitativa' }))
     expect((screen.getByLabelText(/Resultado previsto \(valor-alvo\)/) as HTMLInputElement).value).toBe('80') // nada descartado em silêncio
+  })
+})
+
+describe('Planejamento financeiro previsto (DEV-02.5)', () => {
+  const C1 = 'c_000000000000000000d1'
+  const DRAFT = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }
+  const WITH = {
+    ...DRAFT,
+    financialCategories: [{ id: C1, data: categoryData('C1', 'Recursos Humanos', 'recursos-humanos') }],
+    financialItems: [
+      { id: 'f_000000000000000000e1', data: itemData('F1', C1, 32_000_000) },
+      { id: 'f_000000000000000000e2', data: itemData('F2', C1, 1_700_000, { quantity: { state: 'informed', value: '12' }, unit: { state: 'informed', value: 'meses' }, unitValue: { state: 'informed', cents: 150_000 } }) },
+      { id: 'f_000000000000000000e3', data: itemData('F3', C1, null) },
+    ],
+  }
+  const fin = () => screen.getByRole('region', { name: 'Planejamento financeiro previsto' })
+
+  it('DEV-02.5-T01/T10/T12/T28 — consulta: itens por categoria, valores em R$, totais previstos e pendências; sem realizado', async () => {
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...WITH, status: 'finalized' }] })
+    await screen.findByText('Total previsto: R$ 337.000,00 (parcial: 1 item sem valor informado)')
+    const table = within(fin()).getByRole('table', { name: 'Itens previstos da categoria Recursos Humanos' })
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent)
+    expect(rows[0]).toMatch(/F1Item fictício F1Valor globalR\$ 320\.000,00/)
+    expect(rows[1]).toMatch(/F212 meses × R\$ 1\.500,00R\$ 17\.000,00/)
+    expect(rows[2]).toMatch(/F3.*Não informado/)
+    expect(rows[3]).toMatch(/Subtotal previsto da categoriaR\$ 337\.000,00 \(parcial/)
+    expect(within(fin()).getByText(/F2: Quantidade × valor unitário \(R\$ 18\.000,00\) difere do valor previsto informado/)).toBeTruthy()
+    expect(fin().textContent).not.toMatch(/Saldo|Despesas|Receitas registradas|Realizado/)
+    expect(within(fin()).queryByRole('button')).toBeNull()
+  })
+
+  it('DEV-02.5 — tela estreita: itens em cartões legíveis (sem tabela espremida), com subtotal', async () => {
+    window.matchMedia = ((query: string) => ({ matches: true, media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...WITH, status: 'finalized' }] })
+    const list = await screen.findByRole('list', { name: 'Itens previstos da categoria Recursos Humanos' })
+    expect(within(fin()).queryByRole('table')).toBeNull()
+    const cards = within(list).getAllByRole('listitem').map((li) => li.textContent)
+    expect(cards[0]).toMatch(/F1R\$ 320\.000,00Item fictício F1Valor global/)
+    expect(cards.at(-1)).toMatch(/Subtotal previsto da categoria: R\$ 337\.000,00/)
+  })
+
+  it('DEV-02.5-T04/T05/T07/T08/T09/T11 — cadastrar categoria e item pela interface, com moeda brasileira e valor derivado explícito', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [DRAFT] })
+    await screen.findByText(/Nenhuma categoria ou item registrado nesta versão. Registre o planejamento/)
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar categoria' }))
+    fireEvent.change(screen.getByLabelText(/Categoria padronizada correspondente/), { target: { value: 'servicos-terceiros' } })
+    expect((screen.getByLabelText(/Nome da categoria/) as HTMLInputElement).value).toBe('Serviços de Terceiros')
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar categoria' })).getByRole('button', { name: 'Adicionar categoria' }))
+    await screen.findByText('Categoria C1 registrada e confirmada pelo servidor.')
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar item à categoria C1' }))
+    const form = screen.getByRole('region', { name: 'Adicionar item previsto' })
+    expect((within(form).getByLabelText(/^Categoria/) as HTMLSelectElement).value).toMatch(/^c_/)
+    fill(/Descrição do item/, 'Contratação de oficineiros')
+    fireEvent.change(within(form).getByLabelText(/Quantidade prevista/), { target: { value: '1.200' } })
+    fireEvent.change(within(form).getByLabelText(/Valor unitário previsto/), { target: { value: '15,50' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Usar R$ 18.600,00 como valor previsto' }))
+    expect((within(form).getByLabelText(/^Valor previsto/) as HTMLInputElement).value).toBe('18.600,00')
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar item' }))
+    await screen.findByText('Item F1 registrado e confirmado pelo servidor.')
+    const sent = workPlans.calls.filter((c) => c.kind === 'create-financial')[1]?.request as { data: Record<string, unknown> }
+    expect(sent.data).toMatchObject({ code: 'F1', quantity: { state: 'informed', value: '1200' }, unitValue: { state: 'informed', cents: 1550 }, plannedValue: { state: 'informed', cents: 1_860_000 } })
+    await screen.findByText('Total previsto: R$ 18.600,00')
+  })
+
+  it('DEV-02.5-T06 — validação local: descrição obrigatória e moeda inválida; nada enviado', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [WITH] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar item à categoria C1' }))
+    const form = screen.getByRole('region', { name: 'Adicionar item previsto' })
+    fireEvent.change(within(form).getByLabelText(/^Valor previsto/), { target: { value: '12,345' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar item' }))
+    expect(await within(form).findByText('Revise os campos indicados. Nada foi gravado.')).toBeTruthy()
+    expect(workPlans.calls.filter((c) => c.kind === 'create-financial')).toHaveLength(0)
+  })
+
+  it('DEV-02.5-T02/T03 — Acordo de Cooperação: "não se aplica", sem valor zero e sem botões', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ oscId: ALFA, partnershipId: 'pAlfaCooperacao01xx' }] }, 'pAlfaCooperacao01xx')
+    await screen.findByText(/Não se aplica: Acordo de Cooperação, sem transferência de recursos financeiros. Nenhum valor é registrado/)
+    expect(within(fin()).queryByText(/R\$ 0,00/)).toBeNull()
+    expect(within(fin()).queryByRole('button')).toBeNull()
+  })
+
+  it('DEV-02.5-T27 — Plano finalizado sem planejamento: inclusão não autorizada (aguarda decisão); sem botões', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, status: 'finalized' }] })
+    expect(await within(await screen.findByRole('region', { name: 'Planejamento financeiro previsto' })).findByText(/não está autorizada .* e depende de decisão administrativa/)).toBeTruthy()
+    expect(within(fin()).queryByRole('button')).toBeNull()
+  })
+
+  it('DEV-02.5-T21/T24/T25 — versão anterior preservada; comparação distingue valor e descrição', async () => {
+    const v2Items = [
+      { id: 'f_000000000000000000e1', data: itemData('F1', C1, 35_000_000), inheritedFrom: 'original' },
+      { id: 'f_000000000000000000e2', data: { ...itemData('F2', C1, 1_700_000, { quantity: { state: 'informed', value: '12' }, unit: { state: 'informed', value: 'meses' }, unitValue: { state: 'informed', cents: 150_000 } }), description: 'Nova redação' }, inheritedFrom: 'original' },
+      { id: 'f_000000000000000000e3', data: itemData('F3', C1, null, { status: 'discontinued' }), inheritedFrom: 'original' },
+      { id: 'f_000000000000000000e4', data: itemData('F4', C1, 5_000) },
+    ]
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...WITH, status: 'finalized', activation: 'superseded' }, { ...WITH, sequence: 2, status: 'finalized', revision: 2, financialItems: v2Items }] })
+    await screen.findByText('Total previsto: R$ 367.050,00')
+    fireEvent.click(screen.getByRole('button', { name: 'Comparar com a anterior: Versão 2' }))
+    const table = await screen.findByRole('table', { name: /Planejamento financeiro: diferenças entre Versão original e Versão 2/ })
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent)
+    expect(rows).toEqual(['Item F1AlteradoValor previstoR$ 320.000,00 → R$ 350.000,00', 'Item F2AlteradoDescriçãoR$ 17.000,00', 'Item F3Descontinuado—Não informado', 'Item F4Incluído—R$ 50,00'])
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
+    await screen.findByText('Total previsto: R$ 337.000,00 (parcial: 1 item sem valor informado)')
   })
 })

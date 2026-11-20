@@ -5,6 +5,7 @@
  */
 import { checkActivationChain, checkVersionFinalization, decideVersionCreation, parseStoredActivation, validateFormalAct, versionIdFor, type VersionSummary } from '../../src/domain/workPlanVersions.ts'
 import { checkComponentReview, componentsToken, isDuplicateCode, linkIntegrity, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
+import { financialIntegrity, isDuplicateFinancialCode, validateFinancialCategory, validateFinancialItem, type FinancialCategoryData, type FinancialItemData, type FinStatus } from '../../src/domain/workPlanFinancial.ts'
 import { emptyValues, validateCorrection, type FieldValue, type WorkPlanField, type WorkPlanValues } from '../../src/domain/workPlans.ts'
 import type { RawDocument } from '../../src/services/organizations/parsing.ts'
 import type { WorkPlansSdk } from '../../src/services/workPlans/workPlanService.ts'
@@ -15,7 +16,7 @@ export interface FakeWorkPlansDb {
   readonly kind: 'fake-work-plans'
 }
 
-type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act' | 'create-component' | 'update-component' | 'open-transcription' | 'close-transcription'
+type Kind = 'start' | 'update' | 'finalize' | 'correct' | 'history' | 'create-version' | 'update-act' | 'create-component' | 'update-component' | 'open-transcription' | 'close-transcription' | 'create-financial' | 'update-financial'
 type Call = { kind: Kind; request: Record<string, unknown> }
 
 const TODAY = '2026-11-17'
@@ -37,9 +38,11 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
     docs.set(path, workPlanDocument(p))
     for (const g of p.goals ?? []) docs.set(`${path}/goals/${g.id}`, componentDocument('goal', g, { ...p, workPlanId }))
     for (const i of p.indicators ?? []) docs.set(`${path}/indicators/${i.id}`, componentDocument('indicator', i, { ...p, workPlanId }))
+    for (const c of p.financialCategories ?? []) docs.set(`${path}/financialCategories/${c.id}`, componentDocument('financial-category', c, { ...p, workPlanId }))
+    for (const i of p.financialItems ?? []) docs.set(`${path}/financialItems/${i.id}`, componentDocument('financial-item', i, { ...p, workPlanId }))
   }
   let componentCounter = 0
-  const componentsOf = (planPath: string, collection: 'goals' | 'indicators') =>
+  const componentsOf = (planPath: string, collection: 'goals' | 'indicators' | 'financialCategories' | 'financialItems') =>
     [...docs.entries()].filter(([p]) => p.startsWith(`${planPath}/${collection}/`)).map(([p, d]) => ({ path: p, id: p.slice(planPath.length + collection.length + 2), doc: d }))
   const reads: string[] = []
   const calls: Call[] = []
@@ -79,6 +82,13 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       const raw = (c: 'goals' | 'indicators') => componentsOf(planPath, c).map(({ path, doc }) => ({ path, data: structuredClone(doc) }))
       return { goals: raw('goals'), indicators: raw('indicators') }
     },
+    async listFinancial(_db, oscId, partnershipId, workPlanId) {
+      reads.push(`${oscId}/${partnershipId}/${workPlanId}/financial`)
+      if (failures.has('components')) throw failures.get('components')
+      const planPath = workPlanPath(oscId, partnershipId, workPlanId)
+      const raw = (c: 'financialCategories' | 'financialItems') => componentsOf(planPath, c).map(({ path, doc }) => ({ path, data: structuredClone(doc) }))
+      return { categories: raw('financialCategories'), items: raw('financialItems') }
+    },
   }
 
   let override: ((call: Call) => WorkPlansResult | HistoryResult | Promise<WorkPlansResult | HistoryResult> | undefined) | null = null
@@ -94,6 +104,39 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
     const goals = componentsOf(planPath, 'goals').map((c) => ({ id: c.id, kind: 'goal' as const, data: c.doc.data as GoalData, revision: (c.doc.revision as number) ?? 1 }))
     const indicators = componentsOf(planPath, 'indicators').map((c) => ({ id: c.id, kind: 'indicator' as const, data: c.doc.data as IndicatorData, revision: (c.doc.revision as number) ?? 1 }))
     return { goals, indicators }
+  }
+
+  let financialCounter = 0
+  /** Categoria/item financeiro como o servidor confirmaria (validação do domínio; sem autorização). */
+  async function financial(kind: 'create-financial' | 'update-financial', request: Parameters<WorkPlansApi['createFinancial']>[0] & { id?: string; expectedRevision?: number }, id: string | null): Promise<ComponentResult> {
+    const call: Call = { kind, request: request as unknown as Record<string, unknown> }
+    calls.push(call)
+    const custom = (await override?.(call)) as ComponentResult | undefined
+    if (custom) return custom
+    const planPath = workPlanPath(request.oscId, request.partnershipId, request.workPlanId)
+    const plan = docs.get(planPath)
+    if (!plan) return { ok: false, error: 'not-found' }
+    const cats = componentsOf(planPath, 'financialCategories')
+    const items = componentsOf(planPath, 'financialItems')
+    if (plan.registrationStatus === 'finalized') return { ok: false, error: 'forbidden', reason: cats.length + items.length === 0 ? 'financial-transcription-pending' : 'already-finalized' }
+    const statusMap = new Map(cats.map((c) => [c.id, (c.doc.data as { status: FinStatus }).status]))
+    const v = request.kind === 'financial-category' ? validateFinancialCategory(request.data) : validateFinancialItem(request.data, statusMap)
+    if (!v.ok) return { ok: false, error: 'invalid-financial', fields: v.errors }
+    const collection = request.kind === 'financial-category' ? 'financialCategories' : 'financialItems'
+    const recordId = id ?? `${request.kind === 'financial-category' ? 'c' : 'f'}_${String(++financialCounter).padStart(20, '0')}`
+    const path = `${planPath}/${collection}/${recordId}`
+    const existing = docs.get(path)
+    if (id && !existing) return { ok: false, error: 'not-found' }
+    if (existing && existing.revision !== request.expectedRevision) return { ok: false, error: 'stale' }
+    const peers = (request.kind === 'financial-category' ? cats : items).map((c) => ({ id: c.id, code: (c.doc.data as { code: string }).code }))
+    if (isDuplicateFinancialCode(v.data.code, peers, recordId)) return { ok: false, error: 'invalid-financial', fields: { code: 'duplicate-code' } }
+    const asStored = <T,>(list: { id: string; doc: Record<string, unknown> }[], k: 'financial-category' | 'financial-item') => list.map((c) => ({ id: c.id, kind: k, data: c.doc.data as T, revision: 1 }))
+    const nextCats = request.kind === 'financial-category' ? [...asStored<FinancialCategoryData>(cats, 'financial-category').filter((c) => c.id !== recordId), { id: recordId, kind: 'financial-category' as const, data: v.data as FinancialCategoryData, revision: 1 }] : asStored<FinancialCategoryData>(cats, 'financial-category')
+    const nextItems = request.kind === 'financial-item' ? [...asStored<FinancialItemData>(items, 'financial-item').filter((c) => c.id !== recordId), { id: recordId, kind: 'financial-item' as const, data: v.data as FinancialItemData, revision: 1 }] : asStored<FinancialItemData>(items, 'financial-item')
+    if (!financialIntegrity(nextCats, nextItems).ok) return { ok: false, error: 'invalid-financial', fields: request.kind === 'financial-category' ? { status: 'category-has-items' } : { categoryId: 'discontinued-category' } }
+    const revision = existing ? (existing.revision as number) + 1 : 1
+    docs.set(path, { ...(existing ?? {}), id: recordId, kind: request.kind, oscId: request.oscId, partnershipId: request.partnershipId, workPlanId: request.workPlanId, data: v.data, revision, inheritedFrom: existing?.inheritedFrom ?? null })
+    return { ok: true, id: recordId, revision, changed: true }
   }
 
   /** Meta/indicador como o servidor confirmaria (validação do domínio; sem autorização). */
@@ -211,7 +254,7 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
       })
       // Cópia integral dos componentes (mesmos IDs lógicos), como o servidor.
       const basePath = workPlanPath(request.oscId, request.partnershipId, request.baseWorkPlanId)
-      for (const c of ['goals', 'indicators'] as const)
+      for (const c of ['goals', 'indicators', 'financialCategories', 'financialItems'] as const)
         for (const { id: cid, doc } of componentsOf(basePath, c)) docs.set(`${target}/${c}/${cid}`, { ...structuredClone(doc), workPlanId: id, revision: 1, inheritedFrom: { workPlanId: request.baseWorkPlanId, revision: doc.revision } })
       return ok(id, 1)
     },
@@ -269,6 +312,12 @@ export function createFakeWorkPlans(initial: WorkPlanFixture[] = []) {
     },
     async updateComponent(request) {
       return component('update-component', request, request.componentId)
+    },
+    async createFinancial(request) {
+      return financial('create-financial', request, null)
+    },
+    async updateFinancial(request) {
+      return financial('update-financial', request, request.id)
     },
     async history(request) {
       const call: Call = { kind: 'history', request }

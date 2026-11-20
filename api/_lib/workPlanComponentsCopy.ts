@@ -3,6 +3,7 @@
  * Módulo separado para não criar dependência circular com `workPlansService.ts`.
  */
 import type { DocumentReference, DocumentSnapshot, FieldValue, Transaction } from 'firebase-admin/firestore'
+import { FIN_LIMITS } from '../../src/domain/workPlanFinancial.ts'
 import { LIMITS, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
 
 /**
@@ -11,20 +12,28 @@ import { LIMITS, validateGoal, validateIndicator, type GoalData, type IndicatorD
  * (leituras antes das escritas). Os documentos da versão anterior não são tocados.
  */
 export async function readComponentsForCopy(tx: Transaction, planRef: DocumentReference) {
-  const [goals, indicators] = await Promise.all([
+  const [goals, indicators, financialCategories, financialItems] = await Promise.all([
     tx.get(planRef.collection('goals').limit(LIMITS.goalsPerVersion + 1)),
     tx.get(planRef.collection('indicators').limit(LIMITS.indicatorsPerVersion + 1)),
+    // DEV-02.5: planejamento financeiro integra a versão integral (mesmos IDs lógicos na cópia).
+    tx.get(planRef.collection('financialCategories').limit(FIN_LIMITS.categoriesPerVersion + 1)),
+    tx.get(planRef.collection('financialItems').limit(FIN_LIMITS.itemsPerVersion + 1)),
   ])
-  return { goals: goals.docs, indicators: indicators.docs }
+  return { goals: goals.docs, indicators: indicators.docs, financialCategories: financialCategories.docs, financialItems: financialItems.docs }
 }
 
 export function copyComponents(
   tx: Transaction,
-  source: { goals: DocumentSnapshot[]; indicators: DocumentSnapshot[] },
+  source: { goals: DocumentSnapshot[]; indicators: DocumentSnapshot[]; financialCategories?: DocumentSnapshot[]; financialItems?: DocumentSnapshot[] },
   target: DocumentReference,
   meta: { oscId: string; partnershipId: string; workPlanId: string; baseWorkPlanId: string; uid: string; now: FieldValue },
 ) {
-  for (const [collection, docs] of [['goals', source.goals], ['indicators', source.indicators]] as const) {
+  for (const [collection, docs] of [
+    ['goals', source.goals],
+    ['indicators', source.indicators],
+    ['financialCategories', source.financialCategories ?? []],
+    ['financialItems', source.financialItems ?? []],
+  ] as const) {
     for (const d of docs) {
       tx.create(target.collection(collection).doc(d.id), {
         id: d.id,
@@ -44,7 +53,7 @@ export function copyComponents(
       })
     }
   }
-  return source.goals.length + source.indicators.length
+  return source.goals.length + source.indicators.length + (source.financialCategories?.length ?? 0) + (source.financialItems?.length ?? 0)
 }
 
 /**

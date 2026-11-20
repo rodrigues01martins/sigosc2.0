@@ -23,6 +23,8 @@ rules_version = '2';
 //   consultado somente pelo servidor (/api/osc-work-plans), que exige 'work-plan.view'/'work-plan.edit'.
 // DEV-02.4: LEITURA de .../workPlans/{workPlanId}/goals/{id} e /indicators/{id} com 'work-plan.view';
 //   nenhuma escrita pelo cliente (gravação somente por /api/osc-work-plan-components).
+// DEV-02.5: LEITURA de .../workPlans/{workPlanId}/financialCategories/{id} e /financialItems/{id} com
+//   'work-plan.view'; nenhuma escrita pelo cliente (gravação somente por /api/osc-work-plan-financial).
 //
 // Princípios:
 // - Estar autenticado NÃO concede acesso: toda permissão consulta o vínculo autoritativo
@@ -112,6 +114,14 @@ service cloud.firestore {
             allow get, list: if canConsult(oscId, 'work-plan.view');
           }
           match /indicators/{indicatorId} {
+            allow get, list: if canConsult(oscId, 'work-plan.view');
+          }
+          // DEV-02.5 — planejamento financeiro PREVISTO da versão: somente LEITURA, mesma competência.
+          // Gravações exclusivamente pelo servidor (/api/osc-work-plan-financial).
+          match /financialCategories/{categoryId} {
+            allow get, list: if canConsult(oscId, 'work-plan.view');
+          }
+          match /financialItems/{itemId} {
             allow get, list: if canConsult(oscId, 'work-plan.view');
           }
         }
