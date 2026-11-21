@@ -62,6 +62,7 @@ export interface ItemForm {
   unitValue: Opt
   plannedValue: Opt
   fundingSource: string
+  fundingSourceDescription: string
   period: Opt
   details: Opt
   calculationMemory: Opt
@@ -78,6 +79,7 @@ export function itemFormFrom(d: FinancialItemData | null, suggestedCode: string,
       unitValue: empty,
       plannedValue: empty,
       fundingSource: '',
+      fundingSourceDescription: '',
       period: empty,
       details: empty,
       calculationMemory: empty,
@@ -92,6 +94,7 @@ export function itemFormFrom(d: FinancialItemData | null, suggestedCode: string,
     unitValue: optMoney(d.unitValue),
     plannedValue: optMoney(d.plannedValue),
     fundingSource: d.fundingSource ?? '',
+    fundingSourceDescription: d.fundingSourceDescription ?? '',
     period: optText(d.period),
     details: optText(d.details),
     calculationMemory: optText(d.calculationMemory),
@@ -114,6 +117,8 @@ export function itemFromForm(f: ItemForm, order: number): Record<string, unknown
     unitValue,
     plannedValue,
     fundingSource: f.fundingSource || null,
+    // DEC-PT-017: descrição só para "Outra fonte" (nas demais, nula — nada é presumido).
+    fundingSourceDescription: f.fundingSource === 'other' ? f.fundingSourceDescription : null,
     period: toFinText(f.period),
     details: toFinText(f.details),
     calculationMemory: toFinText(f.calculationMemory),

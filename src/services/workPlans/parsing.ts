@@ -82,6 +82,7 @@ export function parseWorkPlan(raw: RawDocument, oscId: string, partnershipId: st
     finalizedAt: toDate(d.finalizedAt),
     finalizedBy: typeof d.finalizedBy === 'string' ? d.finalizedBy : null,
     transcription: parseTranscription(d.complementaryTranscription),
+    financialTranscription: parseFinancialTranscription(d.financialTranscription),
     componentReview: parseStoredReview(d.componentReview),
   }
 }
@@ -99,6 +100,20 @@ function parseTranscription(raw: unknown): WorkPlan['transcription'] {
     closedAt: toDate(t.closedAt),
     closedBy: typeof t.closedBy === 'string' ? t.closedBy : null,
     review: parseReview(t.review),
+  }
+}
+
+function parseFinancialTranscription(raw: unknown): WorkPlan['financialTranscription'] {
+  if (typeof raw !== 'object' || raw === null) return null
+  const t = raw as Record<string, unknown>
+  if (t.status !== 'open' && t.status !== 'closed') return null
+  return {
+    status: t.status,
+    revision: typeof t.revision === 'number' && Number.isSafeInteger(t.revision) && t.revision >= 1 ? t.revision : 1,
+    openedAt: toDate(t.openedAt),
+    openedBy: typeof t.openedBy === 'string' ? t.openedBy : null,
+    closedAt: toDate(t.closedAt),
+    closedBy: typeof t.closedBy === 'string' ? t.closedBy : null,
   }
 }
 
@@ -168,7 +183,7 @@ export function parseFinancial(raw: { categories: RawDocument[]; items: RawDocum
   const items: FinancialRecord<FinancialItemData>[] = []
   for (const d of raw.items) {
     const m = meta(d, 'financialItems', 'f')
-    const v = m ? validateFinancialItem(d.data.data, known) : null
+    const v = m ? validateFinancialItem(d.data.data, known, 'read') : null
     if (m && v?.ok) items.push({ ...m, kind: 'financial-item', data: v.data })
     else discarded++
   }

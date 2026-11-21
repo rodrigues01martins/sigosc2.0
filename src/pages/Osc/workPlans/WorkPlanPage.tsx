@@ -15,7 +15,7 @@ import {
 import { usePartnershipDependencies } from '../../../hooks/partnershipsContext.ts'
 import { useWorkPlanDependencies } from '../../../hooks/workPlansContext.ts'
 import type { Partnership, PartnershipErrorKind } from '../../../services/partnerships/types.ts'
-import type { PlanComponents as PlanComponentsData, WorkPlan } from '../../../services/workPlans/types.ts'
+import type { PlanComponents as PlanComponentsData, PlanFinancial as PlanFinancialData, WorkPlan } from '../../../services/workPlans/types.ts'
 import {
   ACTIVATION_LABEL,
   activationStatusOf,
@@ -41,6 +41,8 @@ import { VersionComparison } from './VersionComparison.tsx'
 import { VersionHistory } from './VersionHistory.tsx'
 import { ComponentReviewFields } from './ComponentReviewFields.tsx'
 import { FinancialPlanning } from './FinancialPlanning.tsx'
+import { FinancialTranscriptionPanel } from './FinancialTranscriptionPanel.tsx'
+import { financialApplicability, financialPending, itemsMissingPlannedValue } from '../../../domain/workPlanFinancial.ts'
 import { PlanComponents } from './PlanComponents.tsx'
 import { TranscriptionPanel } from './TranscriptionPanel.tsx'
 import { emptyReview, reviewFromDraft, type ReviewDraft } from './componentForm.ts'
@@ -121,6 +123,8 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   // DEV-02.4-C01: componentes da versão exibida, conferência (DEC-PT-007) e declaração na confirmação.
   const [components, setComponents] = useState<{ planId: string; data: PlanComponentsData | null } | null>(null)
   const [review, setReview] = useState<ReviewDraft>(emptyReview)
+  // DEV-02.5-C01: planejamento financeiro da versão exibida (DEC-PT-013) e incorporação financeira (DEC-PT-011).
+  const [financial, setFinancial] = useState<{ planId: string; data: PlanFinancialData | null } | null>(null)
   const [declared, setDeclared] = useState(false)
   const requestIds = useRef({ start: globalThis.crypto.randomUUID(), finalize: globalThis.crypto.randomUUID(), version: globalThis.crypto.randomUUID() })
   const callbacks = useRef({ onResolved, onNotFound })
@@ -200,7 +204,7 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const plan: WorkPlan | null = versions.find((v) => v.id === (selectedId ?? defaultId)) ?? versions[0] ?? null
   const currentPlan = versions.find((v) => v.id === currentId) ?? null
   // DEC-PT-006 (3.7): a incorporação aberta também bloqueia nova versão na interface (sem botão inoperante).
-  const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions.map((v) => ({ ...v, transcriptionOpen: v.transcription?.status === 'open' })), currentId) : null
+  const creation = currentId ? decideVersionCreation(context, p.administrativeStatus, versions.map((v) => ({ ...v, transcriptionOpen: v.transcription?.status === 'open', financialTranscriptionOpen: v.financialTranscription?.status === 'open' })), currentId) : null
   const today = todayInBrasilia()
   const planVigency = plan ? activationStatusOf(plan, currentId) : 'in-registration'
   const notice2 = plan ? vigencyNotice(plan, planVigency, versions, today) : null
@@ -223,10 +227,22 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
   const loaded = plan && components?.planId === plan.id ? components.data : null
   // DEC-PT-007: conferência dos componentes avaliada também aqui (o servidor reavalia na transação).
   const reviewPending = loaded ? checkComponentReview(reviewFromDraft(review), loaded.goals, loaded.indicators) : ['Consultando metas e indicadores…']
-  const check = baseCheck ? { pending: [...baseCheck.pending, ...reviewPending], warnings: baseCheck.warnings } : null
+  const financialApplies = financialApplicability(p.instrument) === 'applicable'
+  const loadedFinancial = plan && financial?.planId === plan.id ? financial.data : null
+  // DEC-PT-013: itens ATIVOS sem valor previsto impedem a finalização (o servidor reavalia na transação).
+  const missingValues = loadedFinancial ? itemsMissingPlannedValue(loadedFinancial.items) : []
+  const financialCheck = !financialApplies ? [] : loadedFinancial ? financialPending(loadedFinancial.categories, loadedFinancial.items) : ['Consultando o planejamento financeiro…']
+  const check = baseCheck ? { pending: [...baseCheck.pending, ...reviewPending, ...financialCheck], warnings: baseCheck.warnings } : null
+  const activeFinancialItems = loadedFinancial?.items.filter((i) => i.data.status === 'active') ?? []
+  const goToItem = (id: string) => {
+    const el = document.getElementById(`fin-item-${id}`)
+    el?.scrollIntoView?.({ block: 'center' })
+    el?.focus()
+  }
   const activeCounts = { goals: loaded?.goals.filter((g) => g.data.status === 'active').length ?? 0, indicators: loaded?.indicators.filter((i) => i.data.status === 'active').length ?? 0 }
   const transcriptionDecision = plan ? decideWorkPlanOperation(context, 'correct', p.administrativeStatus, plan.registrationStatus) : null
   const inTranscription = plan?.registrationStatus === 'finalized' && plan.transcription?.status === 'open' && transcriptionDecision?.allowed === true
+  const inFinancialTranscription = plan?.registrationStatus === 'finalized' && plan.financialTranscription?.status === 'open' && transcriptionDecision?.allowed === true
   const who = (uid: string | null) => (uid && uid === context.uid ? ' · por você' : '')
 
   async function startRegistration() {
@@ -506,9 +522,22 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
             partnershipId={partnershipId}
             plan={plan}
             instrument={p.instrument}
-            canEdit={plan.registrationStatus === 'in-registration' && edit.allowed}
+            canEdit={(plan.registrationStatus === 'in-registration' && edit.allowed) || inFinancialTranscription}
             editDenial={edit.allowed ? null : denialText(edit, 'Você pode consultar o planejamento financeiro, mas não possui autorização para alterá-lo.')}
             onNotice={setNotice}
+            onFinancial={(data) => setFinancial({ planId: plan.id, data })}
+          />
+          <FinancialTranscriptionPanel
+            key={`ft-${plan.id}`}
+            context={context}
+            partnershipId={partnershipId}
+            plan={plan}
+            eligibleVersion={plan.id === currentId && !versions.some((v) => v.registrationStatus === 'in-registration')}
+            applicable={financialApplies}
+            canOperate={transcriptionDecision?.allowed === true}
+            financial={loadedFinancial}
+            onNotice={setNotice}
+            onChanged={refresh}
           />
 
           {plan.registrationStatus === 'in-registration' && check ? (
@@ -523,6 +552,26 @@ function WorkPlanContent({ context, oscName, partnershipId, partnershipLabel, on
                   </h3>
                   <ComponentReviewFields value={review} onChange={setReview} counts={activeCounts} disabled={busy} />
                 </>
+              ) : null}
+              {financialApplies && loadedFinancial && activeFinancialItems.length > 0 ? (
+                <div className={ds.stack}>
+                  <h3 className={ds.cardTitle} style={{ margin: 0 }}>
+                    Valores previstos do planejamento financeiro
+                  </h3>
+                  <p className={ds.muted} role="status" style={{ margin: 0 }}>
+                    {activeFinancialItems.length} {activeFinancialItems.length === 1 ? 'item ativo' : 'itens ativos'} · {activeFinancialItems.length - missingValues.length} com valor previsto informado · {missingValues.length} pendente
+                    {missingValues.length === 1 ? '' : 's'}. A conferência documental do financeiro é opcional.
+                  </p>
+                  {missingValues.length ? (
+                    <div className={`${styles.actions} ${styles.touch}`}>
+                      {missingValues.map((i) => (
+                        <button key={i.id} type="button" className={ds.secondary} onClick={() => goToItem(i.id)}>
+                          Ir para o item {i.data.code}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
               {check.pending.length > 0 ? (
                 <div className={ds.stack}>

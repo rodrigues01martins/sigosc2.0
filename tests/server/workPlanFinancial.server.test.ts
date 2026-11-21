@@ -222,7 +222,9 @@ describe('Aplicabilidade, ciclo de vida e restrições', () => {
   test('DEV-02.5-T27/T26 — Plano finalizado protegido (inclusive durante a incorporação DEC-PT-006); finalização inalterada', async () => {
     await draftOriginal()
     const cat = recId(await addCategory(OP, categoryData('C1', 'Recursos Humanos')))
-    status(await addItem(OP, itemData('F1', cat, null)), 201) // incompleto: não bloqueia a finalização (sem regra aprovada)
+    const f1 = recId(await addItem(OP, itemData('F1', cat, null))) // incompleto é salvo no cadastro
+    status(await finalize('original', 2), 422, 'finalization-pending') // DEC-PT-013 (DEV-02.5-C01): item ativo exige valor
+    status(await patchFin(OP, 'financial-item', f1, 1, itemData('F1', cat, 100)), 200)
     status(await finalize('original', 2), 200) // T26: contrato review/componentsToken/declaration preservado
     status(await addItem(OP, itemData('F2', cat, 100)), 409, 'already-finalized')
     status(await patchFin(OP, 'financial-category', cat, 1, categoryData('C1', 'Outro nome')), 409, 'already-finalized')

@@ -18,6 +18,8 @@ export interface WorkPlanFixture {
   /** DEV-02.4: metas e indicadores PREVISTOS desta versão (dados fictícios). */
   /** DEV-02.4-C01: incorporação complementar gravada (DEC-PT-006). */
   transcription?: { status: 'open' | 'closed'; revision?: number }
+  /** DEV-02.5-C01: incorporação financeira gravada (DEC-PT-011). */
+  financialTranscription?: { status: 'open' | 'closed'; revision?: number }
   goals?: readonly ComponentFixture[]
   indicators?: readonly ComponentFixture[]
   /** DEV-02.5: planejamento financeiro PREVISTO desta versão (dados fictícios). */
@@ -137,6 +139,7 @@ export function workPlanDocument(p: WorkPlanFixture) {
     updatedAt: CREATED,
     updatedBy: p.createdBy ?? 'uid-ficticio-operator',
     ...(finalized ? { finalizedAt: CREATED, finalizedBy: 'uid-ficticio-operator', finalizationRequestId: 'req-final' } : {}),
+    ...(p.financialTranscription ? { financialTranscription: { status: p.financialTranscription.status, revision: p.financialTranscription.revision ?? (p.financialTranscription.status === 'open' ? 1 : 2), openedAt: CREATED, openedBy: 'uid-ficticio-operator', ...(p.financialTranscription.status === 'closed' ? { closedAt: CREATED, closedBy: 'uid-ficticio-operator' } : {}) } } : {}),
     ...(p.transcription ? { complementaryTranscription: { status: p.transcription.status, revision: p.transcription.revision ?? (p.transcription.status === 'open' ? 1 : 2), openedAt: CREATED, openedBy: 'uid-ficticio-operator', ...(p.transcription.status === 'closed' ? { closedAt: CREATED, closedBy: 'uid-ficticio-operator' } : {}) } } : {}),
   }
 }

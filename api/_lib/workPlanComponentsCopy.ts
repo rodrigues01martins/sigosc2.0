@@ -3,7 +3,7 @@
  * Módulo separado para não criar dependência circular com `workPlansService.ts`.
  */
 import type { DocumentReference, DocumentSnapshot, FieldValue, Transaction } from 'firebase-admin/firestore'
-import { FIN_LIMITS } from '../../src/domain/workPlanFinancial.ts'
+import { FIN_LIMITS, validateFinancialCategory, validateFinancialItem, type FinancialCategoryData, type FinancialItemData, type FinStatus, type FinStored } from '../../src/domain/workPlanFinancial.ts'
 import { LIMITS, validateGoal, validateIndicator, type GoalData, type IndicatorData, type Stored } from '../../src/domain/workPlanComponents.ts'
 
 /**
@@ -79,4 +79,30 @@ export function storedComponents(source: { goals: DocumentSnapshot[]; indicators
     indicators.push({ id: d.id, kind: 'indicator', data: v.data, revision: revisionOf(d) })
   }
   return { goals, indicators }
+}
+
+/**
+ * Planejamento financeiro relido e REVALIDADO em modo de LEITURA (preserva registros anteriores, p.ex.
+ * "Outra fonte" sem descrição). Qualquer documento fora do formato → `null` (operação recusada).
+ */
+export function storedFinancial(source: { financialCategories?: DocumentSnapshot[]; financialItems?: DocumentSnapshot[] }): { categories: FinStored<FinancialCategoryData>[]; items: FinStored<FinancialItemData>[] } | null {
+  const revisionOf = (d: DocumentSnapshot) => {
+    const r: unknown = d.get('revision')
+    return typeof r === 'number' && Number.isSafeInteger(r) && r >= 1 ? r : 1
+  }
+  const categories: FinStored<FinancialCategoryData>[] = []
+  const known = new Map<string, FinStatus>()
+  for (const d of source.financialCategories ?? []) {
+    const v = validateFinancialCategory(d.get('data'))
+    if (!v.ok) return null
+    known.set(d.id, 'active')
+    categories.push({ id: d.id, kind: 'financial-category', data: v.data, revision: revisionOf(d) })
+  }
+  const items: FinStored<FinancialItemData>[] = []
+  for (const d of source.financialItems ?? []) {
+    const v = validateFinancialItem(d.get('data'), known, 'read')
+    if (!v.ok) return null
+    items.push({ id: d.id, kind: 'financial-item', data: v.data, revision: revisionOf(d) })
+  }
+  return { categories, items }
 }

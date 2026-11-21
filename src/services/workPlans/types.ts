@@ -48,6 +48,15 @@ export interface WorkPlan {
     readonly closedBy: string | null
     readonly review: ComponentReview | null
   } | null
+  /** DEC-PT-011: incorporação FINANCEIRA complementar (independente da DEC-PT-006; null = não iniciada). */
+  readonly financialTranscription: {
+    readonly status: 'open' | 'closed'
+    readonly revision: number
+    readonly openedAt: Date | null
+    readonly openedBy: string | null
+    readonly closedAt: Date | null
+    readonly closedBy: string | null
+  } | null
   /** DEC-PT-007: conferência registrada na finalização regular (null nas finalizações anteriores). */
   readonly componentReview: (ComponentReview & { readonly reviewedAt: Date | null; readonly reviewedBy: string | null }) | null
 }

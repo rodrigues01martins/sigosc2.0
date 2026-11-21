@@ -40,20 +40,26 @@ export const FIN_LIMITS = {
 // Categorias (modelo híbrido) e fontes previstas
 // ---------------------------------------------------------------------------
 
-/** Categorias PADRONIZADAS do protótipo homologado (HF-G05 / PAG-OSC09). */
+/**
+ * Categorias de REFERÊNCIA (DEC-PT-016, alt. A; HF-G05/PAG-OSC09). Não são classificação jurídica universal:
+ * a associação é explícita e opcional; categorias próprias do Plano são preservadas sem reclassificação.
+ */
 export const STANDARD_CATEGORIES = [
   { id: 'recursos-humanos', label: 'Recursos Humanos' },
   { id: 'servicos-terceiros', label: 'Serviços de Terceiros' },
   { id: 'material-consumo', label: 'Material de Consumo' },
-  { id: 'outras-despesas', label: 'Outras despesas' },
+  { id: 'outras-despesas', label: 'Outras Despesas' },
 ] as const
 export type StandardCategoryId = (typeof STANDARD_CATEGORIES)[number]['id']
 
-/** Fonte prevista do recurso (DEC-052, título): PROPOSTA opcional; não é receita recebida. */
+/**
+ * Fonte PREVISTA do recurso (DEC-PT-017, alt. A): opcional ("Não informada" = null, que NÃO significa zero,
+ * ausência de recursos, inaplicabilidade nem receita). "Outra fonte" exige descrição livre nas gravações.
+ */
 export const FUNDING_SOURCES = [
   { id: 'public-transfer', label: 'Repasse público' },
   { id: 'counterpart', label: 'Contrapartida' },
-  { id: 'other', label: 'Outra fonte prevista' },
+  { id: 'other', label: 'Outra fonte' },
 ] as const
 export type FundingSource = (typeof FUNDING_SOURCES)[number]['id']
 
@@ -80,6 +86,8 @@ export interface FinancialItemData {
   /** Valor previsto do item (global ou total), como consta do Plano. Nunca substituído automaticamente. */
   readonly plannedValue: MoneyValue
   readonly fundingSource: FundingSource | null
+  /** DEC-PT-017: descrição da "Outra fonte" (null nas demais; ausente em registros anteriores). */
+  readonly fundingSourceDescription: string | null
   readonly period: FinText
   readonly details: FinText
   /** Memória de cálculo TEXTUAL (nunca executada). */
@@ -161,6 +169,21 @@ export function derivedTotalCents(quantity: string, unitCents: number): number |
   return total <= BigInt(MAX_CENTS) ? Number(total) : null
 }
 
+/**
+ * Produto EXATO em reais, com todas as casas necessárias ("R$ 8,325"), por aritmética inteira (BigInt).
+ * Usado só para INFORMAR quando não há centavos exatos (DEC-PT-015); nunca vira valor previsto.
+ */
+export function exactProductBrl(quantity: string, unitCents: number): string {
+  if (!QUANTITY_PATTERN.test(quantity) || !Number.isSafeInteger(unitCents) || unitCents < 0) return '—'
+  const [int, frac = ''] = quantity.split('.')
+  const digits = (BigInt(`${int}${frac}`) * BigInt(unitCents)).toString().padStart(frac.length + 3, '0')
+  // escala total = casas da quantidade + 2 (centavos)
+  const scale = frac.length + 2
+  const reais = digits.slice(0, digits.length - scale).replace(/^0+(?=\d)/, '')
+  const decimals = digits.slice(digits.length - scale).replace(/0+$/, '').padEnd(2, '0')
+  return `R$ ${reais.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${decimals}`
+}
+
 // ---------------------------------------------------------------------------
 // Validação (servidor e interface usam a mesma)
 // ---------------------------------------------------------------------------
@@ -213,7 +236,7 @@ function base(raw: Record<string, unknown>, errors: FinErrors) {
 }
 
 const CATEGORY_KEYS = ['code', 'name', 'standardCategory', 'status', 'order']
-const ITEM_KEYS = ['code', 'categoryId', 'description', 'unit', 'quantity', 'unitValue', 'plannedValue', 'fundingSource', 'period', 'details', 'calculationMemory', 'status', 'order']
+const ITEM_KEYS = ['code', 'categoryId', 'description', 'unit', 'quantity', 'unitValue', 'plannedValue', 'fundingSource', 'fundingSourceDescription', 'period', 'details', 'calculationMemory', 'status', 'order']
 
 export function validateFinancialCategory(input: unknown): FinValidation<FinancialCategoryData> {
   if (!isObject(input) || Object.keys(input).some((k) => !CATEGORY_KEYS.includes(k))) return { ok: false, errors: { category: 'invalid' } }
@@ -227,8 +250,12 @@ export function validateFinancialCategory(input: unknown): FinValidation<Financi
   return { ok: true, data: { ...b, name: name.value as string, standardCategory: std as StandardCategoryId | null } }
 }
 
-/** Valida um item COMPLETO; `categories` = categorias da MESMA versão (id → situação). */
-export function validateFinancialItem(input: unknown, categories: ReadonlyMap<string, FinStatus>): FinValidation<FinancialItemData> {
+/**
+ * Valida um item COMPLETO; `categories` = categorias da MESMA versão (id → situação).
+ * `mode: 'write'` (padrão) aplica as regras de gravação vigentes; `'read'` preserva a leitura de registros
+ * anteriores (ex.: "Outra fonte" sem descrição, gravada antes da DEC-PT-017) sem convertê-los.
+ */
+export function validateFinancialItem(input: unknown, categories: ReadonlyMap<string, FinStatus>, mode: 'write' | 'read' = 'write'): FinValidation<FinancialItemData> {
   if (!isObject(input) || Object.keys(input).some((k) => !ITEM_KEYS.includes(k))) return { ok: false, errors: { item: 'invalid' } }
   const errors: FinErrors = {}
   const b = base(input, errors)
@@ -248,6 +275,10 @@ export function validateFinancialItem(input: unknown, categories: ReadonlyMap<st
   for (const [k, r] of Object.entries({ unit, quantity: qty, unitValue, plannedValue, period, details, calculationMemory: memory })) if (r.error) errors[k] = r.error
   const source = input.fundingSource ?? null
   if (source !== null && !FUNDING_SOURCES.some((f) => f.id === source)) errors.fundingSource = 'invalid'
+  const sourceDescription = text(input.fundingSourceDescription, FIN_LIMITS.shortText)
+  if (sourceDescription.error) errors.fundingSourceDescription = sourceDescription.error
+  else if (source === 'other' && !sourceDescription.value && mode === 'write') errors.fundingSourceDescription = 'required'
+  else if (source !== 'other' && sourceDescription.value) errors.fundingSourceDescription = 'invalid'
   if (Object.keys(errors).length) return { ok: false, errors }
   return {
     ok: true,
@@ -260,6 +291,7 @@ export function validateFinancialItem(input: unknown, categories: ReadonlyMap<st
       unitValue: unitValue.value as MoneyValue,
       plannedValue: plannedValue.value as MoneyValue,
       fundingSource: source as FundingSource | null,
+      fundingSourceDescription: source === 'other' ? sourceDescription.value : null,
       period: period.value as FinText,
       details: details.value as FinText,
       calculationMemory: memory.value as FinText,
@@ -338,9 +370,11 @@ export function itemWarnings(d: FinancialItemData): readonly string[] {
   if (d.plannedValue.state === 'not-informed') w.push('Valor previsto não informado.')
   if (d.quantity.state === 'informed' && d.unitValue.state === 'informed') {
     const derived = derivedTotalCents(d.quantity.value, d.unitValue.cents)
-    if (derived === null) w.push('Quantidade × valor unitário não resulta em centavos exatos; confira o valor previsto.')
+    // DEC-PT-015: fração de centavo é exibida EXATA, sem arredondar, truncar ou sugerir valor aproximado.
+    if (derived === null) w.push(`Quantidade × valor unitário = ${exactProductBrl(d.quantity.value, d.unitValue.cents)}, que não corresponde a centavos exatos; prevalece o valor previsto informado.`)
+    // DEC-PT-014: divergência é apenas informativa (não bloqueia, não exige justificativa, não corrige).
     else if (d.plannedValue.state === 'informed' && derived !== d.plannedValue.cents)
-      w.push(`Quantidade × valor unitário (${formatCents(derived)}) difere do valor previsto informado (${formatCents(d.plannedValue.cents)}).`)
+      w.push(`Quantidade × valor unitário (${formatCents(derived)}) difere do valor previsto informado (${formatCents(d.plannedValue.cents)}); diferença de ${formatCents(Math.abs(derived - d.plannedValue.cents))}. Prevalece o valor previsto.`)
   }
   return w
 }
@@ -411,6 +445,7 @@ export const ITEM_FIELD_LABEL: Record<keyof FinancialItemData, string> = {
   unitValue: 'Valor unitário previsto',
   plannedValue: 'Valor previsto',
   fundingSource: 'Fonte prevista',
+  fundingSourceDescription: 'Descrição da outra fonte',
   period: 'Período ou referência temporal',
   details: 'Detalhamento',
   calculationMemory: 'Memória de cálculo',
@@ -426,3 +461,44 @@ export const CATEGORY_FIELD_LABEL: Record<keyof FinancialCategoryData, string> =
 }
 
 export const finLabel = <T extends { id: string; label: string }>(list: readonly T[], id: string | null | undefined): string => list.find((x) => x.id === id)?.label ?? '—'
+
+// ---------------------------------------------------------------------------
+// DEC-PT-013 — valor previsto obrigatório nos itens ATIVOS (finalização e encerramento)
+// ---------------------------------------------------------------------------
+
+/** Itens ATIVOS sem valor previsto INFORMADO (zero informado é aceito; descontinuados não contam). */
+export function itemsMissingPlannedValue(items: readonly FinStored<FinancialItemData>[]): readonly FinStored<FinancialItemData>[] {
+  return items.filter((i) => i.data.status === 'active' && i.data.plannedValue.state !== 'informed')
+}
+
+export const missingValueMessage = (code: string) => `Item financeiro ${code}: valor previsto não informado (obrigatório para itens ativos; zero informado é aceito).`
+
+/** Pendências financeiras OBRIGATÓRIAS (DEC-PT-013) + integridade categoria–item. Sem conferência documental (DEC-PT-012). */
+export function financialPending(categories: readonly FinStored<FinancialCategoryData>[], items: readonly FinStored<FinancialItemData>[]): readonly string[] {
+  const pending = itemsMissingPlannedValue(items).map((i) => missingValueMessage(i.data.code))
+  if (!financialIntegrity(categories, items).ok) pending.push('Há item financeiro ativo vinculado a categoria descontinuada ou inexistente.')
+  return pending
+}
+
+// ---------------------------------------------------------------------------
+// DEC-PT-011 — impressão digital do conjunto financeiro conferido
+// ---------------------------------------------------------------------------
+
+/** IDs e revisões de categorias e itens + vínculo item→categoria (FNV-1a 32 bits), recalculada no servidor. */
+export function financialToken(categories: readonly { id: string; revision: number }[], items: readonly { id: string; revision: number; data: { categoryId: string } }[]): string {
+  const key = [...categories.map((c) => `c:${c.id}:${c.revision}`), ...items.map((i) => `f:${i.id}:${i.revision}:${i.data.categoryId}`)].sort().join('|')
+  let hash = 0x811c9dc5
+  for (let n = 0; n < key.length; n++) {
+    hash ^= key.charCodeAt(n)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${categories.length}.${items.length}-${hash.toString(16).padStart(8, '0')}`
+}
+export const FINANCIAL_TOKEN_PATTERN = /^\d{1,3}\.\d{1,3}-[0-9a-f]{8}$/
+
+/** DEC-PT-011: declaração de ABERTURA da incorporação financeira. */
+export const FINANCIAL_TRANSCRIPTION_DECLARATION =
+  'Declaro que as categorias, os itens e os valores financeiros a serem incorporados correspondem ao planejamento financeiro constante do Plano de Trabalho formalmente aprovado e que este procedimento não representa alteração formal do seu conteúdo.'
+/** DEC-PT-011: declaração FINAL de correspondência no encerramento (distinta da conferência opcional da DEC-PT-012). */
+export const FINANCIAL_CLOSE_DECLARATION =
+  'Declaro que as categorias, os itens e os valores financeiros incorporados correspondem ao planejamento financeiro do Plano de Trabalho formalmente aprovado.'

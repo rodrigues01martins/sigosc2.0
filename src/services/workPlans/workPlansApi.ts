@@ -67,6 +67,10 @@ export interface WorkPlansApi {
   finalize(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean }): Promise<WorkPlansResult>
   /** DEC-PT-006: abrir a incorporação complementar na versão vigente finalizada sem componentes. */
   openTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; declaration: boolean }): Promise<WorkPlansResult>
+  /** DEC-PT-011: abrir a incorporação FINANCEIRA na versão vigente finalizada sem planejamento financeiro. */
+  openFinancialTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; declaration: boolean }): Promise<WorkPlansResult>
+  /** DEC-PT-011: encerrar a incorporação financeira (impressão digital + declaração final). */
+  closeFinancialTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedTranscriptionRevision: number; financialToken: string; declaration: boolean }): Promise<WorkPlansResult>
   /** DEC-PT-006: encerrar a incorporação (conferência + declaração). */
   closeTranscription(request: { oscId: string; partnershipId: string; workPlanId: string; requestId: string; expectedTranscriptionRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean }): Promise<WorkPlansResult>
   /** DEV-02.3: nova versão integral a partir da vigente (alteração formal). */
@@ -192,6 +196,9 @@ export function createWorkPlansApi({ fetch, getIdToken, endpoint = '/api/osc-wor
     finalize: ({ oscId, partnershipId, workPlanId, requestId, expectedRevision, review, componentsToken, declaration }) =>
       call('POST', { oscId, partnershipId, workPlanId, requestId, action: 'finalize', expectedRevision, confirm: true, review, componentsToken, declaration }),
     openTranscription: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'open-transcription', declaration: r.declaration }),
+    openFinancialTranscription: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'open-financial-transcription', declaration: r.declaration }),
+    closeFinancialTranscription: (r) =>
+      call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'close-financial-transcription', expectedTranscriptionRevision: r.expectedTranscriptionRevision, financialToken: r.financialToken, declaration: r.declaration }),
     closeTranscription: (r) =>
       call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, workPlanId: r.workPlanId, requestId: r.requestId, action: 'close-transcription', expectedTranscriptionRevision: r.expectedTranscriptionRevision, review: r.review, componentsToken: r.componentsToken, declaration: r.declaration }),
     createVersion: (r) => call('POST', { oscId: r.oscId, partnershipId: r.partnershipId, requestId: r.requestId, action: 'create-version', baseWorkPlanId: r.baseWorkPlanId, baseRevision: r.baseRevision, formalAct: r.formalAct }),

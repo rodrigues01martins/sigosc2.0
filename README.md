@@ -1311,10 +1311,9 @@ situação). `financial.view`/`financial.edit` (gestão operacional) **não** au
 **Versões:** `create-version` copia categorias e itens com os mesmos IDs lógicos (junto de metas e indicadores);
 a comparação distingue alteração de **valor** (antes → depois) de alteração de **descrição**.
 
-**Planos já finalizados:** inclusão de planejamento financeiro **bloqueada** (409 `financial-transcription-pending`),
-inclusive durante a incorporação da DEC-PT-006 (que vale só para metas e indicadores); a correção material não aceita
-itens. **Finalização e conferência:** contrato da DEV-02.4-C01 inalterado; a conferência financeira **não** foi tornada
-obrigatória (sem regra aprovada) — itens sem valor geram apenas pontos de atenção.
+**Planos já finalizados:** edição comum bloqueada (409 `financial-transcription-pending`); a transcrição usa a
+incorporação financeira da **DEC-PT-011** (11.15). **Finalização:** desde a DEV-02.5-C01, itens ativos exigem valor
+previsto (DEC-PT-013); a conferência financeira continua opcional (DEC-PT-012).
 
 **Interface (PAG-OSC05):** seção "Planejamento financeiro previsto" (categorias, itens, subtotais e total; cartões em
 telas estreitas), formulários de categoria e item com moeda brasileira, comparação entre versões. Nenhum saldo,
@@ -1335,6 +1334,77 @@ de Cooperação; (6) obrigatoriedade do valor previsto na finalização (o prot�
    unitário, "Usar R$ … como valor previsto") → conferir totais; Firestore: `financialCategories`/`financialItems` e eventos.
 4. Finalizar (com a conferência de metas e indicadores) → registrar alteração formal → alterar um valor na Versão 2 →
    "Comparar com a anterior". Acordo de Cooperação: "não se aplica". Reversão: excluir os documentos e eventos criados.
+
+### 11.15 — DEV-02.5-C01: Consolidação das Regras do Planejamento Financeiro
+
+**Decisões registradas**
+
+| Decisão | Alternativa | Efeito no sistema |
+| --- | --- | --- |
+| **DEC-PT-011** | A — incorporação financeira complementar excepcional | Versão **vigente**, **finalizada**, sem categorias **e** sem itens, de instrumento com transferência, pode receber a transcrição do planejamento por procedimento próprio (abrir → registrar → encerrar), sem alteração formal, sem nova versão e sem tocar a finalização original. Independente da DEC-PT-006. |
+| **DEC-PT-012** | C — conferência financeira opcional | Nenhuma declaração/conferência financeira obrigatória na finalização; o contrato de finalização **não ganhou campos**. A conferência de metas e indicadores (DEC-PT-007) continua obrigatória. |
+| **DEC-PT-013** | A — valor previsto obrigatório | Itens podem ser salvos incompletos; na finalização regular e no encerramento da incorporação financeira, todo item **ativo** precisa de `plannedValue.state = informed` (zero informado aceito; descontinuados dispensados). Verificado pelo servidor na transação. |
+| **DEC-PT-014** | A — divergência informativa | quantidade × valor unitário ≠ valor previsto → alerta com calculado, informado e diferença; não bloqueia, não exige justificativa, não corrige. Totais usam só o valor previsto. |
+| **DEC-PT-015** | A — precisão exata | Centavos inteiros; quantidade decimal exata (≤ 4 casas); produto por BigInt. Fração de centavo é **exibida exata** (ex.: R$ 8,325), sem arredondar, truncar ou sugerir valor. |
+| **DEC-PT-016** | A — categorias de referência e próprias | Referências: Recursos Humanos, Serviços de Terceiros, Material de Consumo, Outras Despesas (não são classificação jurídica). Associação explícita e opcional; sem reclassificação automática. |
+| **DEC-PT-017** | A — fontes previstas | Repasse público, Contrapartida, Outra fonte (**descrição obrigatória** nas gravações) ou Não informada (não é zero, ausência de recursos, inaplicabilidade nem receita). |
+
+**Incorporação financeira — modelo (`workPlans/{id}.financialTranscription`, separado de `complementaryTranscription`)**
+
+| Campo | Conteúdo |
+| --- | --- |
+| `status` | ausente = não iniciada (`not-started`); `open`; `closed` |
+| `revision` | 1 na abertura; 2 no encerramento |
+| `workPlanId`, `rule` | versão de referência; `DEC-PT-011` |
+| `openedAt/By`, `openRequestId`, `openDeclaration` | abertura (hora do servidor; declaração aceita, `automatedVerification: false`) |
+| `closedAt/By`, `closeRequestId`, `financialToken`, `summary`, `closeDeclaration` | encerramento: impressão digital conferida, contagens e total previsto, declaração final |
+
+Transições: não iniciada → `open` → `closed`. Sem reabertura, sem nova incorporação na mesma versão, sem
+encerramento automático; abandono mantém `open` para retomada. `finalizedAt/By`, evento de finalização, sequência,
+origem, ativação, data de efeitos, valores gerais, metas e indicadores **não** são alterados; a revisão geral do
+Plano não é incrementada.
+
+**Contratos (`POST /api/osc-work-plans`, `work-plan.edit`)**
+
+| Ação | Payload (além de `oscId`, `partnershipId`, `requestId`) | Sucesso | Erros principais |
+| --- | --- | --- | --- |
+| `open-financial-transcription` | `workPlanId`, `declaration` | 201 `opened`; reenvio 200 `opened:false` | 409 `not-finalized`, `financial-transcription-not-current`, `pending-version-exists`, `financial-exists`, `financial-transcription-already-open`, `financial-transcription-closed`, `financial-not-applicable`; 422 `declaration-required`; 403 permissão / arquivada / suspensão comercial |
+| `close-financial-transcription` | `workPlanId`, `expectedTranscriptionRevision`, `financialToken`, `declaration` | 200 `closed`; reenvio 200 `closed:false` | 409 `financial-transcription-not-open`, `financial-transcription-closed`, `stale`, `financial-changed`; 422 `review-pending` (lista), `declaration-required` |
+| `finalize` (**sem campos novos**) | inalterado (`review`, `componentsToken`, `declaration`) | 200 | **novo:** 422 `finalization-pending` com "Item financeiro Fn: valor previsto não informado…" |
+
+`financialToken` = impressão digital (IDs e revisões de categorias e itens + vínculo item→categoria), recalculada no
+servidor na transação de encerramento. Categorias e itens durante a incorporação usam `/api/osc-work-plan-financial`
+sem mudança de contrato: a exceção vale **só** porque o servidor lê `financialTranscription.status = open`; nenhum
+campo da requisição (`mode`, `allowFinalized`…) é aceito. Itens: novo campo opcional `fundingSourceDescription`
+(registros anteriores sem ele continuam válidos na leitura; nova gravação de "Outra fonte" exige a descrição).
+
+**Auditoria:** `financial-transcription-opened` e `-closed` (regra, procedimento, declaração, impressão digital,
+resumo, revisão); categorias/itens com `procedure: 'financial-transcription' | 'registration'` e
+`fundingSourceChange` (antes/depois). Eventos anteriores preservados; tentativas recusadas não geram evento (a
+recusa ocorre antes de qualquer gravação, preservando a atomicidade).
+
+**Versionamento:** `create-version` recusa base com incorporação financeira aberta (409 `financial-transcription-open`)
+ou de metas aberta (409 `transcription-open`). A DEC-PT-011 **não** acrescenta gravações à criação de versão:
+continuam até 480 componentes + documento da versão + evento = **482** operações, testadas numa transação
+(limite de 500 do Firestore). Margem de 18 gravações: novos componentes por versão exigiriam cópia em lotes com
+marcador de conclusão (evolução proposta, não implementada).
+
+**Compatibilidade:** finalizações anteriores não são reavaliadas (sem `componentReview` ou valores retroativos);
+versão copiada de um Plano histórico com item sem valor só exige o valor ao finalizar a **nova** versão.
+
+**Firestore Rules:** nenhuma regra nova; preservadas as leituras de `goals`, `indicators`, `financialCategories` e
+`financialItems` (DEV-02.4/02.5), **ainda pendentes de publicação** no `sigorsc-testes`. Antes de publicar:
+`firebase projects:list` para conferir o projeto e `firebase deploy --only firestore:rules --project sigorsc-testes`.
+Nunca em produção.
+
+**Validação no Preview (Firebase de testes)**
+1. Publicar as regras (acima) e implantar `/api/osc-work-plans`, `/api/osc-work-plan-components` e `/api/osc-work-plan-financial`.
+2. **Finalização regular:** itens sem valor aparecem como pendências ("Ir para o item …"); informe os valores (zero é aceito),
+   faça a conferência de metas e indicadores e finalize — sem declaração financeira.
+3. **Incorporação financeira:** Plano vigente finalizado sem financeiro → "Incorporar planejamento financeiro do Plano aprovado"
+   → declaração → registrar categorias e itens (sair e retomar) → declaração final → "Encerrar incorporação financeira".
+   Conferir `financialTranscription` e que `finalizedAt` não mudou; com a incorporação aberta, "Registrar alteração formal" não aparece.
+4. "Outra fonte" exige descrição; fração de centavo é exibida exata. Reversão: excluir os documentos, campos e eventos criados.
 
 ## 12. Publicação na Vercel
 
@@ -1373,7 +1443,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Metas, indicadores e resultados previstos por versão (DEV-02.4; PAG-OSC05 e consulta na PAG-OSC08) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
 | Incorporação complementar (DEC-PT-006), conferência na finalização (DEC-PT-007), periodicidade justificada (DEC-PT-009) | Implementado (DEV-02.4-C01); validado em emuladores; **não validado no Preview** |
 | Planejamento financeiro previsto por versão (DEV-02.5; PAG-OSC05) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
-| Planejamento financeiro em Plano já finalizado | **Bloqueado** (aguarda decisão administrativa) |
+| Incorporação financeira (DEC-PT-011), valor previsto obrigatório (DEC-PT-013), fontes e precisão (DEC-PT-014 a 017) | Implementado (DEV-02.5-C01); validado em emuladores; **não validado no Preview** |
 | Apuração, avaliação, prorrogações, execução, gestão financeira operacional, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 

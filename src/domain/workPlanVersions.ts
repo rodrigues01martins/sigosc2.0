@@ -194,6 +194,8 @@ export interface VersionSummary {
   readonly previousWorkPlanId?: string | null
   /** DEC-PT-006: incorporação complementar em andamento nesta versão. */
   readonly transcriptionOpen?: boolean
+  /** DEC-PT-011: incorporação financeira em andamento nesta versão. */
+  readonly financialTranscriptionOpen?: boolean
 }
 
 export type CurrentResolution =
@@ -334,8 +336,16 @@ export type VersionDenial =
   | 'components-changed'
   /** DEV-02.5: instrumento sem transferência de recursos (Acordo de Cooperação). */
   | 'financial-not-applicable'
-  /** DEV-02.5: planejamento financeiro em versão FINALIZADA — sem regra de incorporação (aguarda decisão). */
+  /** DEV-02.5: planejamento financeiro em versão FINALIZADA sem incorporação financeira aberta. */
   | 'financial-transcription-pending'
+  /** DEV-02.5-C01 (DEC-PT-011): incorporação financeira complementar. */
+  | 'financial-transcription-open'
+  | 'financial-transcription-not-current'
+  | 'financial-exists'
+  | 'financial-transcription-already-open'
+  | 'financial-transcription-closed'
+  | 'financial-transcription-not-open'
+  | 'financial-changed'
 export type VersionDecision = WorkPlanDecision | { readonly allowed: false; readonly reason: VersionDenial }
 
 /**
@@ -360,6 +370,8 @@ export function decideVersionCreation(
   if (versions.some((v) => activationStatusOf(v, null) === 'legacy-pending')) return { allowed: false, reason: 'legacy-version-pending' }
   // DEC-PT-006 (3.7): nenhuma versão parte de base com incorporação complementar aberta.
   if (versions.some((v) => v.transcriptionOpen)) return { allowed: false, reason: 'transcription-open' }
+  // DEC-PT-011 (4.10): idem para a incorporação financeira (procedimentos independentes).
+  if (versions.some((v) => v.financialTranscriptionOpen)) return { allowed: false, reason: 'financial-transcription-open' }
   if (resolution.status !== 'determined' || resolution.id !== baseId) return { allowed: false, reason: 'base-not-current' }
   return decision
 }
@@ -396,7 +408,14 @@ export const VERSION_MESSAGE: Partial<Record<VersionDenial, string>> = {
   'components-changed': 'Metas ou indicadores foram alterados depois da conferência exibida. Os dados foram recarregados; confira novamente.',
   'financial-not-applicable': 'Planejamento financeiro não se aplica: o instrumento não envolve transferência de recursos financeiros.',
   'financial-transcription-pending':
-    'Esta versão já foi finalizada. A inclusão de planejamento financeiro em Plano finalizado não está autorizada (a incorporação complementar da DEC-PT-006 vale só para metas e indicadores) e depende de decisão administrativa.',
+    'Esta versão foi finalizada sem planejamento financeiro estruturado. Para transcrevê-lo, use "Incorporar planejamento financeiro do Plano aprovado" (DEC-PT-011).',
+  'financial-transcription-open': 'Há incorporação financeira em andamento na versão vigente. Encerre-a antes de registrar nova alteração formal.',
+  'financial-transcription-not-current': 'A incorporação financeira só é admitida na versão vigente no SIGOSC.',
+  'financial-exists': 'Esta versão já possui categorias ou itens financeiros; a incorporação financeira não se aplica.',
+  'financial-transcription-already-open': 'Já existe incorporação financeira em andamento nesta versão. Retome-a.',
+  'financial-transcription-closed': 'A incorporação financeira desta versão já foi encerrada; não são admitidas novas alterações nem reabertura.',
+  'financial-transcription-not-open': 'Não há incorporação financeira em andamento nesta versão.',
+  'financial-changed': 'Categorias ou itens financeiros foram alterados depois da conferência exibida. Os dados foram recarregados; confira novamente.',
 }
 
 /** Finalização de versão posterior: requisitos do Plano + ato formal válido (H: tipo e data). */

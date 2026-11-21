@@ -85,7 +85,7 @@ class Outcome extends Error {
     this.response = response
   }
 }
-const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'financial-transcription-pending', 'financial-not-applicable']
+const CONFLICTS: readonly VersionDenial[] = ['already-finalized', 'financial-transcription-pending', 'financial-not-applicable', 'financial-transcription-closed']
 const deny = (reason: VersionDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 const invalid = (fields: Record<string, unknown>) => new Outcome(json(422, { error: 'invalid-financial', fields }))
 
@@ -127,10 +127,14 @@ async function run(deps: ServerDeps, uid: string, request: Parsed): Promise<ApiR
 
       // 3. Aplicabilidade e ciclo de vida.
       if (financialApplicability(partnership.instrument) === 'not-applicable') throw deny('financial-not-applicable')
+      // Finalizada = sem edição comum; ÚNICA exceção: incorporação financeira ABERTA no servidor (DEC-PT-011).
+      // A incorporação de metas e indicadores (DEC-PT-006) NÃO autoriza o financeiro (sem edição cruzada).
       const registration = planSnap.get('registrationStatus') === 'finalized' ? 'finalized' : 'in-registration'
-      const decision = decideWorkPlanOperation(context, 'update', partnership.administrativeStatus, registration)
+      const transcription = planSnap.get('financialTranscription.status')
+      const inTranscription = registration === 'finalized' && transcription === 'open'
+      const decision = decideWorkPlanOperation(context, 'update', partnership.administrativeStatus, inTranscription ? 'in-registration' : registration)
       if (!decision.allowed) {
-        // Plano finalizado SEM planejamento financeiro: inclusão não autorizada (sem regra aprovada).
+        if (decision.reason === 'already-finalized' && transcription === 'closed') throw deny('financial-transcription-closed')
         if (decision.reason === 'already-finalized' && catSnap.empty && itemSnap.empty) throw deny('financial-transcription-pending')
         throw deny(decision.reason)
       }
@@ -144,7 +148,7 @@ async function run(deps: ServerDeps, uid: string, request: Parsed): Promise<ApiR
         return { id: d.id, kind: 'financial-category', data: v.data, revision: revisionOf(d) }
       })
       const items: FinStored<FinancialItemData>[] = itemSnap.docs.map((d) => {
-        const v = validateFinancialItem(d.get('data'), new Map([...statusMap].map(([k]) => [k, 'active' as FinStatus])))
+        const v = validateFinancialItem(d.get('data'), new Map([...statusMap].map(([k]) => [k, 'active' as FinStatus])), 'read')
         if (!v.ok) throw new Outcome(json(409, { error: 'invalid-state' }))
         return { id: d.id, kind: 'financial-item', data: v.data, revision: revisionOf(d) }
       })
@@ -192,6 +196,8 @@ async function run(deps: ServerDeps, uid: string, request: Parsed): Promise<ApiR
         plannedValueChange: item && fields.includes('plannedValue') ? { before: prevItem?.plannedValue ?? null, after: item.plannedValue } : null,
         categoryChange: item && fields.includes('categoryId') ? { before: prevItem?.categoryId ?? null, after: item.categoryId } : null,
         statusChanged: fields.includes('status') ? data.status : null,
+        fundingSourceChange: item && (fields.includes('fundingSource') || fields.includes('fundingSourceDescription')) ? { before: prevItem ? { source: prevItem.fundingSource, description: prevItem.fundingSourceDescription ?? null } : null, after: { source: item.fundingSource, description: item.fundingSourceDescription } } : null,
+        procedure: inTranscription ? 'financial-transcription' : 'registration',
         actorUid: uid,
         actorAuthority: decision.authority,
         requestId,

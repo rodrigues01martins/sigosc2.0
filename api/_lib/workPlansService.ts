@@ -12,6 +12,8 @@
  * POST  {..., action: 'create-version', baseWorkPlanId, baseRevision, formalAct}             → nova versão (alteração formal)
  * POST  {..., workPlanId, action: 'open-transcription', declaration}                           → abrir incorporação complementar (DEC-PT-006)
  * POST  {..., workPlanId, action: 'close-transcription', expectedTranscriptionRevision, review, componentsToken, declaration} → encerrar
+ * POST  {..., workPlanId, action: 'open-financial-transcription', declaration}                 → abrir incorporação financeira (DEC-PT-011)
+ * POST  {..., workPlanId, action: 'close-financial-transcription', expectedTranscriptionRevision, financialToken, declaration} → encerrar
  * GET   ?oscId=…&partnershipId=…[&workPlanId=…]                                              → histórico de correções
  *
  * Todas as gravações exigem `work-plan.edit` (DEC-PT-001); o histórico exige `work-plan.view`.
@@ -62,7 +64,8 @@ import {
   type WorkPlanValues,
 } from '../../src/domain/workPlans.ts'
 import { MAX_BODY_BYTES } from './limits.ts'
-import { copyComponents, readComponentsForCopy, storedComponents } from './workPlanComponentsCopy.ts'
+import { copyComponents, readComponentsForCopy, storedComponents, storedFinancial } from './workPlanComponentsCopy.ts'
+import { FINANCIAL_CLOSE_DECLARATION, FINANCIAL_TOKEN_PATTERN, FINANCIAL_TRANSCRIPTION_DECLARATION, financialApplicability, financialPending, financialToken, plannedTotals } from '../../src/domain/workPlanFinancial.ts'
 import { COMPONENTS_DECLARATION, COMPONENTS_TOKEN_PATTERN, TRANSCRIPTION_DECLARATION, checkComponentReview, componentsToken, parseReview, type ComponentReview } from '../../src/domain/workPlanComponents.ts'
 import { serverToday } from './partnershipsService.ts'
 import { membershipFacts, organizationFacts, type ApiRequest, type ApiResponse, type ServerDeps } from './permissionsService.ts'
@@ -85,6 +88,8 @@ type Parsed =
   | (Base & { kind: 'finalize'; workPlanId: string; expectedRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean })
   | (Base & { kind: 'open-transcription'; workPlanId: string; declaration: boolean })
   | (Base & { kind: 'close-transcription'; workPlanId: string; expectedTranscriptionRevision: number; review: ComponentReview; componentsToken: string; declaration: boolean })
+  | (Base & { kind: 'open-financial-transcription'; workPlanId: string; declaration: boolean })
+  | (Base & { kind: 'close-financial-transcription'; workPlanId: string; expectedTranscriptionRevision: number; financialToken: string; declaration: boolean })
   | (Base & { kind: 'update'; workPlanId: string; expectedRevision: number; changes: Record<string, unknown> })
   | (Base & { kind: 'update-act'; workPlanId: string; expectedRevision: number; formalAct: unknown })
   | (Base & { kind: 'correct'; workPlanId: string; expectedRevision: number; changes: unknown; justification: unknown; declaration: unknown })
@@ -145,6 +150,16 @@ function parse(method: string | undefined, rawBody: string): Parsed | null {
     if (typeof body.componentsToken !== 'string' || !COMPONENTS_TOKEN_PATTERN.test(body.componentsToken)) return null
     return { ...base, kind: 'close-transcription', workPlanId, expectedTranscriptionRevision: body.expectedTranscriptionRevision, review, componentsToken: body.componentsToken, declaration: body.declaration }
   }
+  // DEC-PT-011: incorporação FINANCEIRA — procedimento próprio, independente da DEC-PT-006.
+  if (body.action === 'open-financial-transcription' && keysMatch(body, ['oscId', 'partnershipId', 'workPlanId', 'requestId', 'action', 'declaration'], false)) {
+    if (typeof body.declaration !== 'boolean') return null
+    return { ...base, kind: 'open-financial-transcription', workPlanId, declaration: body.declaration }
+  }
+  if (body.action === 'close-financial-transcription' && keysMatch(body, ['oscId', 'partnershipId', 'workPlanId', 'requestId', 'action', 'expectedTranscriptionRevision', 'financialToken', 'declaration'], false)) {
+    if (!isRevision(body.expectedTranscriptionRevision) || typeof body.declaration !== 'boolean') return null
+    if (typeof body.financialToken !== 'string' || !FINANCIAL_TOKEN_PATTERN.test(body.financialToken)) return null
+    return { ...base, kind: 'close-financial-transcription', workPlanId, expectedTranscriptionRevision: body.expectedTranscriptionRevision, financialToken: body.financialToken, declaration: body.declaration }
+  }
   if (body.action === 'correct' && keysMatch(body, ['oscId', 'partnershipId', 'requestId', 'action', 'expectedRevision', 'changes', 'justification', 'declaration'])) {
     if (!isRevision(body.expectedRevision)) return null
     return { ...base, kind: 'correct', workPlanId, expectedRevision: body.expectedRevision, changes: body.changes, justification: body.justification, declaration: body.declaration }
@@ -187,6 +202,14 @@ const CONFLICTS: readonly VersionDenial[] = [
   'transcription-closed',
   'transcription-not-open',
   'components-changed',
+  'financial-not-applicable',
+  'financial-transcription-open',
+  'financial-transcription-not-current',
+  'financial-exists',
+  'financial-transcription-already-open',
+  'financial-transcription-closed',
+  'financial-transcription-not-open',
+  'financial-changed',
 ]
 const deny = (reason: VersionDenial) => new Outcome(json(CONFLICTS.includes(reason) ? 409 : 403, { error: 'forbidden', reason }))
 
@@ -241,6 +264,7 @@ function summaryOf(snap: DocumentSnapshot): VersionSummary {
     activationStatus: parseStoredActivation(snap.get('activation.status')),
     previousWorkPlanId: isVersionId(previous) ? previous : null,
     transcriptionOpen: snap.get('complementaryTranscription.status') === 'open',
+    financialTranscriptionOpen: snap.get('financialTranscription.status') === 'open',
   }
 }
 const isoOf = (value: unknown) => (value && typeof (value as { toDate?: unknown }).toDate === 'function' ? (value as { toDate(): Date }).toDate().toISOString() : null)
@@ -391,6 +415,70 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         return json(200, { ok: true, closed: true, workPlan: state('closed', revision + 1) })
       }
 
+      // ------------------------------------------------------------- DEC-PT-011: incorporação financeira
+      if (request.kind === 'open-financial-transcription' || request.kind === 'close-financial-transcription') {
+        if (!planSnap?.exists) throw new Outcome(json(404, { error: 'not-found' }))
+        const t = (planSnap.get('financialTranscription') ?? null) as Record<string, unknown> | null
+        const state = (status: string, revision: number) => ({ id: workPlanId, revision: revisionOf(planSnap), registrationStatus: 'finalized', financialTranscription: { status, revision } })
+        // Reenvio do MESMO pedido pelo MESMO usuário: estado confirmado, sem novo evento.
+        if (request.kind === 'open-financial-transcription' && t?.openRequestId === requestId && t?.openedBy === uid) return json(200, { ok: true, opened: false, workPlan: state(String(t.status), Number(t.revision)) })
+        if (request.kind === 'close-financial-transcription' && t?.status === 'closed' && t?.closeRequestId === requestId && t?.closedBy === uid) return json(200, { ok: true, closed: false, workPlan: state('closed', Number(t.revision)) })
+        const decision = decideWorkPlanOperation(context, 'correct', partnership.administrativeStatus, registrationOf(planSnap))
+        if (!decision.allowed) throw deny(decision.reason)
+        if (financialApplicability(partnership.instrument) === 'not-applicable') throw deny('financial-not-applicable')
+        const all = await tx.get(plans.limit(MAX_VERSIONS))
+        const versions = all.docs.filter((d) => d.get('partnershipId') === partnershipId).map(summaryOf)
+        const source = await readComponentsForCopy(tx, planRef)
+        const now = FieldValue.serverTimestamp()
+        const common = { oscId, partnershipId, workPlanId, sequence: sequenceOf(planSnap), actorUid: uid, actorAuthority: decision.authority, requestId, procedure: 'financial-transcription', rule: 'DEC-PT-011', at: now }
+        if (request.kind === 'open-financial-transcription') {
+          if (t?.status === 'open') throw deny('financial-transcription-already-open')
+          if (t?.status === 'closed') throw deny('financial-transcription-closed')
+          if (currentVersionId(versions) !== workPlanId) throw deny('financial-transcription-not-current')
+          if (versions.some((v) => v.registrationStatus === 'in-registration')) throw deny('pending-version-exists')
+          // Ausência de categorias E de itens verificada aqui, na transação.
+          if (source.financialCategories.length + source.financialItems.length > 0) throw deny('financial-exists')
+          if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
+          tx.update(planRef, {
+            financialTranscription: {
+              status: 'open',
+              revision: 1,
+              rule: 'DEC-PT-011',
+              workPlanId,
+              openedAt: now,
+              openedBy: uid,
+              openRequestId: requestId,
+              openDeclaration: { accepted: true, text: FINANCIAL_TRANSCRIPTION_DECLARATION, automatedVerification: false },
+            },
+          })
+          tx.create(events.doc(), { action: 'financial-transcription-opened', ...common, declaration: FINANCIAL_TRANSCRIPTION_DECLARATION, transcriptionRevision: 1 })
+          return json(201, { ok: true, opened: true, workPlan: state('open', 1) })
+        }
+        if (t?.status !== 'open') throw deny(t?.status === 'closed' ? 'financial-transcription-closed' : 'financial-transcription-not-open')
+        const revision = Number(t.revision)
+        if (revision !== request.expectedTranscriptionRevision) throw new Outcome(json(409, { error: 'stale', revision }))
+        const financial = storedFinancial(source)
+        if (!financial) throw new Outcome(json(409, { error: 'invalid-state' }))
+        if (financialToken(financial.categories, financial.items) !== request.financialToken) throw deny('financial-changed')
+        const pending = financialPending(financial.categories, financial.items)
+        if (pending.length) throw new Outcome(json(422, { error: 'review-pending', pending }))
+        if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
+        const totals = plannedTotals(financial.categories, financial.items)
+        const summary = { categories: financial.categories.length, items: financial.items.length, activeItems: totals.total.itemCount, plannedCents: totals.total.informedCents }
+        tx.update(planRef, {
+          'financialTranscription.status': 'closed',
+          'financialTranscription.revision': revision + 1,
+          'financialTranscription.closedAt': now,
+          'financialTranscription.closedBy': uid,
+          'financialTranscription.closeRequestId': requestId,
+          'financialTranscription.financialToken': request.financialToken,
+          'financialTranscription.summary': summary,
+          'financialTranscription.closeDeclaration': { accepted: true, text: FINANCIAL_CLOSE_DECLARATION, automatedVerification: false },
+        })
+        tx.create(events.doc(), { action: 'financial-transcription-closed', ...common, summary, financialToken: request.financialToken, declaration: FINANCIAL_CLOSE_DECLARATION, transcriptionRevision: revision + 1 })
+        return json(200, { ok: true, closed: true, workPlan: state('closed', revision + 1) })
+      }
+
       // ------------------------------------------------------------- cadastro do documento indicado
       const registration = registrationOf(planSnap)
       if (planSnap?.exists) {
@@ -522,12 +610,16 @@ async function run(deps: ServerDeps, uid: string, request: Parsed, today: string
         supersededSnap = docs.find((d) => d.id === supersededId)
       }
       // DEC-PT-007: metas e indicadores relidos NESTA transação; conferência e impressão digital.
-      const components = storedComponents(await readComponentsForCopy(tx, planRef))
+      const source = await readComponentsForCopy(tx, planRef)
+      const components = storedComponents(source)
       if (!components) throw new Outcome(json(409, { error: 'invalid-state' }))
+      // DEC-PT-013: itens financeiros ATIVOS exigem valor previsto informado (lidos nesta transação).
+      const financial = financialApplicability(partnership.instrument) === 'applicable' ? storedFinancial(source) : { categories: [], items: [] }
+      if (!financial) throw new Outcome(json(409, { error: 'invalid-state' }))
       if (componentsToken([...components.goals, ...components.indicators]) !== request.componentsToken) throw deny('components-changed')
       const act = sequence > 1 ? storedAct(snap) : null
       const check = checkVersionFinalization(values, partnership, act, today)
-      const pending = [...check.pending, ...checkComponentReview(request.review, components.goals, components.indicators)]
+      const pending = [...check.pending, ...checkComponentReview(request.review, components.goals, components.indicators), ...financialPending(financial.categories, financial.items)]
       if (pending.length > 0) throw new Outcome(json(422, { error: 'finalization-pending', pending, warnings: check.warnings }))
       if (!request.declaration) throw new Outcome(json(422, { error: 'declaration-required' }))
       const counts = { goals: components.goals.length, indicators: components.indicators.length }

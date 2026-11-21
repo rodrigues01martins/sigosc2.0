@@ -215,6 +215,20 @@ describe('Firestore — parcerias (DEV-02.1)', () => {
     await assertFails(as(USERS.SINGLE.uid).doc(item).get())
   })
 
+  test('DEV-02.5-C01 (regra) — incorporação financeira: navegador não abre, encerra nem grava itens', async () => {
+    const plan = `oscs/${ALFA}/partnerships/parceria-alfa-1/workPlans/original`
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc(plan).set({ ...workPlanDocument({ oscId: ALFA, partnershipId: 'parceria-alfa-1', status: 'finalized' }) })
+      await admin.firestore().doc(memberPath({ oscId: ALFA, uid: PERMISSION_USERS.DELEGATE.uid })).update({ permissions: ['work-plan.view', 'work-plan.edit', 'financial.view'] })
+    })
+    const delegate = as(PERMISSION_USERS.DELEGATE.uid)
+    await assertSucceeds(delegate.doc(plan).get())
+    await assertFails(delegate.doc(plan).update({ financialTranscription: { status: 'open' } }))
+    await assertFails(delegate.doc(plan).update({ 'financialTranscription.status': 'closed' }))
+    await assertFails(delegate.doc(`${plan}/financialItems/f_0123456789abcdef0123`).set({ data: {} }))
+    await assertFails(delegate.doc(`${plan}/financialCategories/c_0123456789abcdef0123`).set({ data: {} }))
+  })
+
   test('Auditoria de parcerias ilegível e não gravável pelo cliente', async () => {
     await assertFails(as(operator).doc(`oscs/${ALFA}/partnershipEvents/evento-1`).get())
     await assertFails(as(operator).collection(`oscs/${ALFA}/partnershipEvents`).get())

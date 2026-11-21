@@ -13,6 +13,10 @@ import { PARTNERSHIP_LOAD_ERROR } from '../partnerships/format.ts'
 import { CategoryFormCard, ItemFormCard, type FinSubmitResult } from './FinancialForms.tsx'
 import { formatCents, nextFinancialCode, showMoney, showQty, showText } from './financialForm.ts'
 
+/** DEC-PT-017: "Outra fonte" com a descrição informada; registro anterior sem descrição é identificado, nunca presumido. */
+const sourceLabel = (d: FinancialItemData) =>
+  d.fundingSource === 'other' ? (d.fundingSourceDescription ? `Outra fonte — ${d.fundingSourceDescription}` : 'Outra fonte (descrição não informada — registro anterior)') : finLabel(FUNDING_SOURCES, d.fundingSource)
+
 type State = { status: 'loading' } | { status: 'error'; text: string } | { status: 'ready'; data: PlanFinancial }
 type Editing = { kind: 'category'; record: FinancialRecord<FinancialCategoryData> | null } | { kind: 'item'; record: FinancialRecord<FinancialItemData> | null; presetCategory: string | null } | null
 
@@ -25,6 +29,8 @@ interface Props {
   canEdit: boolean
   editDenial: string | null
   onNotice(n: { kind: 'success' | 'error'; text: string }): void
+  /** Planejamento carregado (pendências da finalização e da incorporação financeira, DEC-PT-011/013). */
+  onFinancial?(data: PlanFinancial | null): void
 }
 
 /**
@@ -32,12 +38,16 @@ interface Props {
  * PAG-OSC09: modelo híbrido). Somente valores previstos: sem receitas, despesas, saldos ou
  * comparativos com o realizado (Gestão Financeira, PAG-OSC09, é módulo futuro).
  */
-export function FinancialPlanning({ context, partnershipId, plan, instrument, canEdit, editDenial, onNotice }: Props) {
+export function FinancialPlanning({ context, partnershipId, plan, instrument, canEdit, editDenial, onNotice, onFinancial }: Props) {
   const { service, api } = useWorkPlanDependencies()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [editing, setEditing] = useState<Editing>(null)
   const requestId = useRef(globalThis.crypto.randomUUID())
+  const reported = useRef(onFinancial)
+  useEffect(() => {
+    reported.current = onFinancial
+  })
   // Telas estreitas: itens em cartões (tabela de 4–5 colunas não cabe em 320 px sem espremer a descrição).
   const compact = useMediaQuery('(max-width: 719px)')
   const applicable = financialApplicability(instrument) === 'applicable'
@@ -47,12 +57,14 @@ export function FinancialPlanning({ context, partnershipId, plan, instrument, ca
     if (!applicable) return
     let alive = true
     void service.listFinancial(context.oscId, partnershipId, plan.id).then((r) => {
-      if (alive) setState(r.ok ? { status: 'ready', data: r.data } : { status: 'error', text: PARTNERSHIP_LOAD_ERROR[r.error] })
+      if (!alive) return
+      setState(r.ok ? { status: 'ready', data: r.data } : { status: 'error', text: PARTNERSHIP_LOAD_ERROR[r.error] })
+      reported.current?.(r.ok ? r.data : null)
     })
     return () => {
       alive = false
     }
-  }, [service, context.oscId, partnershipId, plan.id, plan.revision, applicable, attempt])
+  }, [service, context.oscId, partnershipId, plan.id, plan.revision, plan.financialTranscription?.status, applicable, attempt])
 
   if (!applicable) {
     return (
@@ -177,7 +189,7 @@ export function FinancialPlanning({ context, partnershipId, plan, instrument, ca
             <p className={`${ds.info} ${styles.iconNote}`} role="note">
               <InfoIcon />
               <span>
-                {plan.registrationStatus === 'finalized'
+                {plan.registrationStatus === 'finalized' && !canEdit
                   ? denialMessage('financial-transcription-pending', '')
                   : canEdit
                     ? 'Nenhuma categoria ou item registrado nesta versão. Registre o planejamento financeiro como consta do Plano aprovado.'
@@ -200,7 +212,7 @@ export function FinancialPlanning({ context, partnershipId, plan, instrument, ca
                 {catItems.length && compact ? (
                   <ul aria-label={`Itens previstos da categoria ${c.data.name}`} style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                     {catItems.map((i) => (
-                      <li key={i.id} className={styles.card} style={{ paddingLeft: 0, paddingRight: 0 }}>
+                      <li key={i.id} id={`fin-item-${i.id}`} tabIndex={-1} className={styles.card} style={{ paddingLeft: 0, paddingRight: 0 }}>
                         <div className={styles.cardRow} style={{ justifyContent: 'space-between' }}>
                           <strong>{i.data.code}</strong>
                           <strong style={{ overflowWrap: 'anywhere' }}>{showMoney(i.data.plannedValue)}</strong>
@@ -210,7 +222,7 @@ export function FinancialPlanning({ context, partnershipId, plan, instrument, ca
                           {i.data.quantity.state === 'not-informed' && i.data.unitValue.state === 'not-informed'
                             ? 'Valor global'
                             : `${showQty(i.data.quantity)}${i.data.unit.state === 'informed' ? ` ${i.data.unit.value}` : ''} × ${showMoney(i.data.unitValue)}`}
-                          {i.data.fundingSource ? ` · Fonte prevista: ${finLabel(FUNDING_SOURCES, i.data.fundingSource)}` : ''}
+                          {i.data.fundingSource ? ` · Fonte prevista: ${sourceLabel(i.data)}` : ''}
                         </span>
                         {i.data.calculationMemory.state === 'informed' ? <span className={styles.detail}>Memória de cálculo: {showText(i.data.calculationMemory)}</span> : null}
                         {button('Editar', `Editar item ${i.data.code}`, () => setEditing({ kind: 'item', record: i, presetCategory: null }))}
@@ -235,11 +247,11 @@ export function FinancialPlanning({ context, partnershipId, plan, instrument, ca
                       </thead>
                       <tbody>
                         {catItems.map((i) => (
-                          <tr key={i.id}>
+                          <tr key={i.id} id={`fin-item-${i.id}`} tabIndex={-1}>
                             <th scope="row">{i.data.code}</th>
                             <td style={{ overflowWrap: 'anywhere' }}>
                               {i.data.description}
-                              {i.data.fundingSource ? <span className={styles.detail}>Fonte prevista: {finLabel(FUNDING_SOURCES, i.data.fundingSource)}</span> : null}
+                              {i.data.fundingSource ? <span className={styles.detail}>Fonte prevista: {sourceLabel(i.data)}</span> : null}
                               {i.data.calculationMemory.state === 'informed' ? <span className={styles.detail}>Memória de cálculo: {showText(i.data.calculationMemory)}</span> : null}
                             </td>
                             <td>

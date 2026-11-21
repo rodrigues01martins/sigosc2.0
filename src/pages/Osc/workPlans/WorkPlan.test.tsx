@@ -711,7 +711,7 @@ describe('Consolidação de metas e indicadores (DEV-02.4-C01)', () => {
   it('C01-T01/T02/T04/T06/T07/T12/T13/T14 — incorporação complementar: abrir com declaração, transcrever, conferir e encerrar', async () => {
     const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [FINAL] })
     fireEvent.click(await screen.findByRole('button', { name: 'Incorporar metas e indicadores do Plano aprovado' })) // T01
-    expect(screen.getByText(/não altera juridicamente o Plano e não cria versão formal/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: 'Metas e indicadores do Plano aprovado' })).getByText(/não altera juridicamente o Plano e não cria versão formal/)).toBeTruthy()
     const start = screen.getByRole('button', { name: 'Iniciar incorporação' })
     expect((start as HTMLButtonElement).disabled).toBe(true) // T04: declaração obrigatória
     fireEvent.click(screen.getByRole('checkbox', { name: /Declaro que as metas e os indicadores que serão incorporados/ }))
@@ -885,10 +885,11 @@ describe('Planejamento financeiro previsto (DEV-02.5)', () => {
     expect(within(fin()).queryByRole('button')).toBeNull()
   })
 
-  it('DEV-02.5-T27 — Plano finalizado sem planejamento: inclusão não autorizada (aguarda decisão); sem botões', async () => {
+  it('DEV-02.5-T27 / C01 — Plano finalizado sem planejamento: edição comum bloqueada; inclusão só pela incorporação financeira', async () => {
     openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, status: 'finalized' }] })
-    expect(await within(await screen.findByRole('region', { name: 'Planejamento financeiro previsto' })).findByText(/não está autorizada .* e depende de decisão administrativa/)).toBeTruthy()
+    expect(await within(await screen.findByRole('region', { name: 'Planejamento financeiro previsto' })).findByText(/use "Incorporar planejamento financeiro do Plano aprovado" \(DEC-PT-011\)/)).toBeTruthy()
     expect(within(fin()).queryByRole('button')).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Incorporar planejamento financeiro do Plano aprovado' })).toBeTruthy()
   })
 
   it('DEV-02.5-T21/T24/T25 — versão anterior preservada; comparação distingue valor e descrição', async () => {
@@ -906,5 +907,125 @@ describe('Planejamento financeiro previsto (DEV-02.5)', () => {
     expect(rows).toEqual(['Item F1AlteradoValor previstoR$ 320.000,00 → R$ 350.000,00', 'Item F2AlteradoDescriçãoR$ 17.000,00', 'Item F3Descontinuado—Não informado', 'Item F4Incluído—R$ 50,00'])
     fireEvent.click(screen.getByRole('button', { name: 'Consultar: Versão original' }))
     await screen.findByText('Total previsto: R$ 337.000,00 (parcial: 1 item sem valor informado)')
+  })
+})
+
+describe('Consolidação do planejamento financeiro (DEV-02.5-C01)', () => {
+  const C1 = 'c_000000000000000000f1'
+  const DRAFT = { oscId: ALFA, partnershipId: RUNNING, values: REQUIRED }
+  const FINAL = { ...DRAFT, status: 'finalized' as const, revision: 3 }
+  const fin = () => screen.getByRole('region', { name: 'Planejamento financeiro previsto' })
+  const cat = { id: C1, data: categoryData('C1', 'Pessoal do projeto') }
+
+  it('C01-T01/T03/T09/T10/T11/T15/T16/T17 — incorporação financeira: abrir com declaração, transcrever, pendência de valor, encerrar', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [FINAL] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Incorporar planejamento financeiro do Plano aprovado' }))
+    const start = screen.getByRole('button', { name: 'Iniciar incorporação financeira' })
+    expect((start as HTMLButtonElement).disabled).toBe(true) // T03
+    fireEvent.click(screen.getByRole('checkbox', { name: /Declaro que as categorias, os itens e os valores financeiros a serem incorporados/ }))
+    fireEvent.click(start)
+    await screen.findByRole('heading', { name: 'Incorporação financeira em andamento' })
+    expect(workPlans.calls.find((c) => c.kind === 'open-financial-transcription')?.request).toMatchObject({ workPlanId: 'original', declaration: true })
+    expect(screen.getByText('Cadastro no SIGOSC: Estruturado e finalizado internamente')).toBeTruthy()
+    fireEvent.click(await within(fin()).findByRole('button', { name: 'Adicionar categoria' })) // T09
+    fill(/Nome da categoria/, 'Pessoal do projeto')
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar categoria' })).getByRole('button', { name: 'Adicionar categoria' }))
+    await screen.findByText('Categoria C1 registrada e confirmada pelo servidor.')
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar item à categoria C1' })) // T10
+    fill(/Descrição do item/, 'Coordenação pedagógica')
+    fireEvent.click(within(screen.getByRole('region', { name: 'Adicionar item previsto' })).getByRole('button', { name: 'Adicionar item' }))
+    await screen.findByText('Item F1 registrado e confirmado pelo servidor.') // incompleto é salvo
+    const panel = screen.getByRole('region', { name: 'Incorporação financeira em andamento' })
+    expect(await within(panel).findByText(/Item financeiro F1: valor previsto não informado/)).toBeTruthy() // T15
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /Declaro que as categorias, os itens e os valores financeiros incorporados/ }))
+    expect((within(panel).getByRole('button', { name: 'Encerrar incorporação financeira' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Editar item F1' }))
+    fireEvent.change(screen.getByLabelText(/^Valor previsto/), { target: { value: '0,00' } }) // T25: zero informado
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar item' }))
+    await screen.findByText('Item F1 atualizado e confirmado pelo servidor.')
+    await within(panel).findByText('Todos os itens ativos têm valor previsto informado.')
+    fireEvent.click(within(panel).getByRole('button', { name: 'Encerrar incorporação financeira' })) // T16
+    expect(await screen.findByText(/Incorporação financeira concluída. Planejamento preservado; nenhuma versão formal foi criada/)).toBeTruthy()
+    expect(workPlans.calls.find((c) => c.kind === 'close-financial-transcription')?.request).toMatchObject({ declaration: true, expectedTranscriptionRevision: 1 })
+    await screen.findByText(/Incorporação financeira concluída em/)
+    expect(within(fin()).queryByRole('button')).toBeNull() // T17
+  })
+
+  it('C01-T11/T19/T20 — retomada; nova versão indisponível; procedimentos independentes', async () => {
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, financialTranscription: { status: 'open' }, financialCategories: [cat] }] })
+    await screen.findByRole('heading', { name: 'Incorporação financeira em andamento' })
+    expect(await within(fin()).findByRole('button', { name: 'Editar categoria C1' })).toBeTruthy() // T11
+    expect(screen.queryByRole('button', { name: 'Registrar alteração formal' })).toBeNull() // T19
+    expect(screen.getByText(/Há incorporação financeira em andamento na versão vigente/)).toBeTruthy()
+    // T20: a incorporação financeira não habilita metas e indicadores.
+    expect(within(screen.getByRole('region', { name: 'Metas e indicadores previstos' })).queryByRole('button', { name: 'Adicionar meta' })).toBeNull()
+    cleanup()
+    openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...FINAL, transcription: { status: 'open' } }] })
+    await screen.findByRole('heading', { name: 'Incorporação complementar em andamento' })
+    expect(await within(fin()).findByText(/use "Incorporar planejamento financeiro do Plano aprovado"/)).toBeTruthy()
+    expect(within(fin()).queryByRole('button')).toBeNull() // a de metas não habilita o financeiro
+  })
+
+  it('C01-T21/T22/T24/T25/T26 — finalização: valor previsto obrigatório nos ativos; zero aceito; descontinuado dispensado; sem declaração financeira', async () => {
+    const items = [
+      { id: 'f_0000000000000000f0a1', data: itemData('F1', C1, null) },
+      { id: 'f_0000000000000000f0a2', data: itemData('F2', C1, 0) },
+      { id: 'f_0000000000000000f0a3', data: itemData('F3', C1, null, { status: 'discontinued' }) },
+    ]
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, financialCategories: [cat], financialItems: items }] })
+    await screen.findByText(/2 itens ativos · 1 com valor previsto informado · 1 pendente\. A conferência documental do financeiro é opcional\./)
+    const pend = () => within(screen.getByRole('list', { name: 'Pendências' })).getAllByRole('listitem').map((li) => li.textContent).join(' ')
+    expect(pend()).toMatch(/Item financeiro F1: valor previsto não informado/)
+    expect(pend()).not.toMatch(/F2|F3/) // T25/T26
+    fireEvent.click(screen.getByRole('button', { name: 'Ir para o item F1' }))
+    expect(document.activeElement?.id).toBe('fin-item-f_0000000000000000f0a1')
+    fireEvent.click(screen.getByRole('button', { name: 'Editar item F1' }))
+    fireEvent.change(screen.getByLabelText(/^Valor previsto/), { target: { value: '1.500,00' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar item' }))
+    await screen.findByText('Item F1 atualizado e confirmado pelo servidor.')
+    await confer() // T22: conferência de metas e indicadores continua obrigatória
+    await screen.findByText('Os requisitos para a finalização estão atendidos.')
+    fireEvent.click(screen.getByRole('button', { name: 'Finalizar cadastro' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirmar finalização interna' })
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1) // T21: nenhuma declaração financeira adicional
+    declareAndConfirm(dialog)
+    await screen.findByText('Cadastro no SIGOSC: Estruturado e finalizado internamente')
+    expect(Object.keys(workPlans.calls.find((c) => c.kind === 'finalize')?.request ?? {}).sort()).toEqual(['componentsToken', 'declaration', 'expectedRevision', 'oscId', 'partnershipId', 'requestId', 'review', 'workPlanId'])
+  })
+
+  it('C01-T28/T29/T30 — divergência e fração de centavo: alertas informativos exatos; total usa o valor previsto', async () => {
+    const items = [
+      { id: 'f_0000000000000000f0b1', data: itemData('F1', C1, 1_700_000, { quantity: { state: 'informed', value: '12' }, unitValue: { state: 'informed', cents: 150_000 } }) },
+      { id: 'f_0000000000000000f0b2', data: itemData('F2', C1, 833, { quantity: { state: 'informed', value: '2.5' }, unitValue: { state: 'informed', cents: 333 } }) },
+    ]
+    openPlan({ prepare: withPermissions(['partnerships.view', 'work-plan.view']), workPlans: [{ ...DRAFT, financialCategories: [cat], financialItems: items }] })
+    await screen.findByText('Total previsto: R$ 17.008,33')
+    expect(within(fin()).getByText(/F1: Quantidade × valor unitário \(R\$ 18\.000,00\) difere do valor previsto informado \(R\$ 17\.000,00\); diferença de R\$ 1\.000,00\. Prevalece o valor previsto\./)).toBeTruthy()
+    expect(within(fin()).getByText(/F2: Quantidade × valor unitário = R\$ 8,325, que não corresponde a centavos exatos/)).toBeTruthy()
+  })
+
+  it('C01-T31/T32/T33/T34 — categoria própria; referência sem reclassificação; outra fonte exige descrição; não informada', async () => {
+    const { workPlans } = openPlan({ prepare: withPermissions(ALL), workPlans: [{ ...DRAFT, financialCategories: [cat] }] })
+    await within(await screen.findByRole('region', { name: 'Planejamento financeiro previsto' })).findByText('Classificação própria do Plano') // T31
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar item à categoria C1' }))
+    const form = screen.getByRole('region', { name: 'Adicionar item previsto' })
+    fill(/Descrição do item/, 'Material didático')
+    fireEvent.change(within(form).getByLabelText(/^Valor previsto/), { target: { value: '100,00' } })
+    fireEvent.change(within(form).getByLabelText(/Fonte prevista do recurso/), { target: { value: 'other' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar item' }))
+    expect(await within(form).findByText('Revise os campos indicados. Nada foi gravado.')).toBeTruthy() // T33
+    fireEvent.change(within(form).getByLabelText(/Descrição da outra fonte/), { target: { value: 'Doação de empresa parceira' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Adicionar item' }))
+    await screen.findByText('Item F1 registrado e confirmado pelo servidor.')
+    expect(workPlans.calls.find((c) => c.kind === 'create-financial')?.request).toMatchObject({ data: { fundingSource: 'other', fundingSourceDescription: 'Doação de empresa parceira' } })
+    expect(await within(fin()).findByText(/Fonte prevista: Outra fonte — Doação de empresa parceira/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar item à categoria C1' }))
+    const second = screen.getByRole('region', { name: 'Adicionar item previsto' })
+    fill(/Descrição do item/, 'Lanches')
+    fireEvent.change(within(second).getByLabelText(/^Valor previsto/), { target: { value: '50,00' } })
+    fireEvent.click(within(second).getByRole('button', { name: 'Adicionar item' }))
+    await screen.findByText('Item F2 registrado e confirmado pelo servidor.')
+    expect(workPlans.calls.filter((c) => c.kind === 'create-financial')[1]?.request).toMatchObject({ data: { fundingSource: null, fundingSourceDescription: null } }) // T34
+    expect(within(fin()).getAllByText(/Fonte prevista/)).toHaveLength(1)
   })
 })

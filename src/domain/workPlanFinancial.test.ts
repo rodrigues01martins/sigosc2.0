@@ -112,3 +112,56 @@ test('DEV-02.5-T28 — sem receitas, despesas ou saldos: campos de realizado rec
     assert.ok(!validateFinancialCategory({ code: 'C1', name: 'X', [key]: 1 }).ok, key)
   }
 })
+
+// ============================================================================ DEV-02.5-C01
+import { STANDARD_CATEGORIES, exactProductBrl, financialPending, financialToken, itemsMissingPlannedValue } from './workPlanFinancial.ts'
+import { decideVersionCreation } from './workPlanVersions.ts'
+
+test('DEV-02.5-C01-T23/T24/T25/T26 — valor previsto obrigatório só para itens ATIVOS; zero informado aceito', () => {
+  const v = (id: string, extra: Record<string, unknown>) => stored(id, 'financial-item', ok<FinancialItemData>(validateFinancialItem(item({ code: id.slice(-2), ...extra }), cats)))
+  const items = [
+    v('f_000000000000000000a1', { plannedValue: { state: 'not-informed' } }),
+    v('f_000000000000000000a2', { plannedValue: { state: 'not-applicable' } }),
+    v('f_000000000000000000a3', { plannedValue: { state: 'informed', cents: 0 } }),
+    v('f_000000000000000000a4', { plannedValue: { state: 'not-informed' }, status: 'discontinued' }),
+  ]
+  assert.deepEqual(itemsMissingPlannedValue(items).map((i) => i.id), ['f_000000000000000000a1', 'f_000000000000000000a2'])
+  const c1 = stored(C1, 'financial-category', ok<FinancialCategoryData>(validateFinancialCategory({ code: 'C1', name: 'RH' })))
+  assert.equal(financialPending([c1], items).length, 2)
+  assert.deepEqual(financialPending([c1], [items[2] as FinStored<FinancialItemData>]), [])
+})
+
+test('DEV-02.5-C01-T30 — fração de centavo exibida exata (sem arredondar nem truncar)', () => {
+  assert.equal(exactProductBrl('2.5', 333), 'R$ 8,325')
+  assert.equal(exactProductBrl('0.3333', 1), 'R$ 0,003333')
+  assert.equal(exactProductBrl('1200', 1550), 'R$ 18.600,00')
+  assert.equal(exactProductBrl('9999.9999', 99_999_999), 'R$ 9.999.999.800,000001')
+  const source = readFileSync(new URL('./workPlanFinancial.ts', import.meta.url), 'utf8')
+  assert.equal(/Math\.round|toFixed|parseFloat/.test(source), false, 'sem arredondamento por ponto flutuante')
+})
+
+test('DEV-02.5-C01-T33/T34 — "Outra fonte" exige descrição na gravação; registros anteriores preservados na leitura', () => {
+  const other = validateFinancialItem(item({ fundingSource: 'other' }), cats)
+  assert.ok(!other.ok && other.errors.fundingSourceDescription === 'required')
+  const described = ok<FinancialItemData>(validateFinancialItem(item({ fundingSource: 'other', fundingSourceDescription: 'Doação privada' }), cats))
+  assert.deepEqual([described.fundingSource, described.fundingSourceDescription], ['other', 'Doação privada'])
+  const legacy = validateFinancialItem(item({ fundingSource: 'other' }), cats, 'read')
+  assert.ok(legacy.ok && legacy.data.fundingSourceDescription === null, 'leitura sem conversão de registro anterior')
+  assert.ok(!validateFinancialItem(item({ fundingSource: 'counterpart', fundingSourceDescription: 'x' }), cats).ok, 'descrição só para "Outra fonte"')
+  const none = ok<FinancialItemData>(validateFinancialItem(item({}), cats))
+  assert.deepEqual([none.fundingSource, none.fundingSourceDescription], [null, null]) // T34: não informada, sem receita
+  assert.deepEqual(STANDARD_CATEGORIES.map((c) => c.label), ['Recursos Humanos', 'Serviços de Terceiros', 'Material de Consumo', 'Outras Despesas']) // T32
+})
+
+test('DEV-02.5-C01-T14/T19 — impressão digital financeira; nova versão bloqueada com incorporação financeira aberta', () => {
+  const c = [{ id: C1, revision: 1 }]
+  const first = { id: 'f_000000000000000000a1', revision: 2, data: { categoryId: C1 } }
+  const i = [first]
+  assert.equal(financialToken(c, i), financialToken([...c], [...i]))
+  assert.notEqual(financialToken(c, i), financialToken(c, [{ ...first, revision: 3 }]))
+  assert.notEqual(financialToken(c, i), financialToken(c, [{ ...first, data: { categoryId: C2 } }]), 'vínculo item→categoria integra a impressão digital')
+  assert.match(financialToken([], []), /^0\.0-[0-9a-f]{8}$/)
+  const editor = { uid: 'u', oscId: 'osc', organization: { id: 'osc', registrationStatus: 'active', commercialStatus: 'active', administratorUid: 'a' }, membership: { uid: 'u', status: 'active', permissions: ['work-plan.edit'], canManagePermissions: false } } as const
+  const base = [{ id: 'original', sequence: 1, registrationStatus: 'finalized' as const, activationStatus: null, financialTranscriptionOpen: true }]
+  assert.deepEqual(decideVersionCreation(editor as never, 'em-execucao', base, 'original'), { allowed: false, reason: 'financial-transcription-open' })
+})

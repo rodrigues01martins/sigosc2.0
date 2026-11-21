@@ -6,6 +6,7 @@ import {
   FUNDING_SOURCES,
   STANDARD_CATEGORIES,
   derivedTotalCents,
+  exactProductBrl,
   parseBrlToCents,
   parseQuantity,
   validateFinancialCategory,
@@ -288,7 +289,7 @@ export function ItemFormCard({ initial, suggestedCode, order, versionLabel, cate
       ) : null}
       {typeof q === 'string' && typeof u === 'number' && derived === null ? (
         <p className={ds.warning} role="status">
-          Quantidade × valor unitário não resulta em centavos exatos; informe o valor previsto como consta do Plano.
+          Quantidade × valor unitário = {exactProductBrl(q, u)}, que não corresponde a centavos exatos (sem arredondamento). Informe o valor previsto como consta do Plano.
         </p>
       ) : null}
       <div className={styles.formGrid}>
@@ -304,6 +305,11 @@ export function ItemFormCard({ initial, suggestedCode, order, versionLabel, cate
             </select>
           )}
         </Field>
+        {f.fundingSource === 'other' ? (
+          <Field id={`${id}-srcdesc`} label="Descrição da outra fonte" required error={errors.fundingSourceDescription} hint="Identifique a origem prevista, como consta do Plano.">
+            {(p) => <input {...p} className={styles.input} value={f.fundingSourceDescription} maxLength={FIN_LIMITS.shortText} onChange={(e) => set('fundingSourceDescription', e.target.value)} />}
+          </Field>
+        ) : null}
         <OptField id={`${id}-period`} label="Período ou referência temporal" value={f.period} onChange={(v) => set('period', v)} error={errors.period} max={FIN_LIMITS.shortText} />
         <OptField id={`${id}-details`} label="Detalhamento" value={f.details} onChange={(v) => set('details', v)} error={errors.details} long max={FIN_LIMITS.description} />
         <OptField id={`${id}-memory`} label="Memória de cálculo" value={f.calculationMemory} onChange={(v) => set('calculationMemory', v)} error={errors.calculationMemory} hint="Texto informativo; o SIGOSC não executa cálculos digitados." long max={FIN_LIMITS.description} />
