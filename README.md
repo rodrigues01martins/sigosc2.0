@@ -61,6 +61,7 @@ Requisito de execução: **Node.js 24.x** (fixado em `package.json` → `engines
 ├── tests/auth/           # Integração do Auth SDK real com o emulador do Auth
 ├── tests/server/         # Operações privilegiadas (Admin SDK) nos emuladores
 ├── tests/support/        # SDKs simulados e dados fictícios (testes)
+├── docs/                # Documentação técnica versionada (ex.: docs/uxpt — DEV-UXPT-01)
 ├── firestore.rules       # Regras do Firestore (negação por padrão + leituras Multi-Tenant)
 ├── firestore.indexes.json # Índice de grupo de coleções para members.uid
 ├── storage.rules         # Regras do Storage (negação integral)
@@ -1406,6 +1407,18 @@ Nunca em produção.
    Conferir `financialTranscription` e que `finalizedAt` não mudou; com a incorporação aberta, "Registrar alteração formal" não aparece.
 4. "Outra fonte" exige descrição; fração de centavo é exibida exata. Reversão: excluir os documentos, campos e eventos criados.
 
+### 11.16 — DEV-UXPT-01: preparação e contratos de compatibilidade (UX-PT-01/02)
+
+Estudo **sem alteração funcional** (interface, APIs, regras, permissões e dados intactos) para a revisão da experiência
+do Plano de Trabalho (DEC-UXPT-02.1 a 02.5). Documento único: [`docs/uxpt/DEV-UXPT-01-compatibilidade.md`](docs/uxpt/DEV-UXPT-01-compatibilidade.md)
+— inventário dos estados legados, dependências da finalização, matriz de compatibilidade, contratos propostos
+(primeiro salvamento, salvamento contínuo, correção cadastral, alteração formal, consulta histórica), plano de testes e
+pendências de decisão (P1–P10).
+
+Testes de caracterização (IDs `UXPT01-*`; os marcados **LEGADO** descrevem limitações a substituir explicitamente):
+`src/domain/workPlanLegacy.characterization.test.ts`, `src/services/workPlans/legacyParsing.characterization.test.ts`,
+`tests/server/workPlanLegacy.characterization.server.test.ts` e `tests/rules/workPlanLegacy.rules.test.ts`.
+
 ## 12. Publicação na Vercel
 
 1. Na Vercel, *Add New → Project* e importar o repositório `rodrigues01martins/sigosc2.0`.
@@ -1444,6 +1457,7 @@ será necessário adicionar uma regra de *rewrite* para `index.html`.
 | Incorporação complementar (DEC-PT-006), conferência na finalização (DEC-PT-007), periodicidade justificada (DEC-PT-009) | Implementado (DEV-02.4-C01); validado em emuladores; **não validado no Preview** |
 | Planejamento financeiro previsto por versão (DEV-02.5; PAG-OSC05) | Implementado; validado em emuladores; **regras e função não publicadas/validadas no Preview** |
 | Incorporação financeira (DEC-PT-011), valor previsto obrigatório (DEC-PT-013), fontes e precisão (DEC-PT-014 a 017) | Implementado (DEV-02.5-C01); validado em emuladores; **não validado no Preview** |
+| Revisão da experiência do Plano (UX-PT-01/02): estudo, contratos e caracterização (DEV-UXPT-01) | Documentado e testado; **nenhuma funcionalidade alterada**; aguarda homologação e decisões P1–P10 |
 | Apuração, avaliação, prorrogações, execução, gestão financeira operacional, prestação de contas | Não iniciados |
 | 100 funcionalidades homologadas (Inventário V1.0) | **Não implementadas** |
 
