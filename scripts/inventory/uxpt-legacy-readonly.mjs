@@ -14,12 +14,12 @@
  *
  * Saída: `report.json` e `report.md` (somente contagens) no diretório indicado por `--out`, e um
  * resumo agregado no console. Identificadores técnicos ficam apenas em memória.
- * Código de saída: 0 = completo e consistente; 2 = parcial/falha/inconsistente; 3 = configuração recusada.
+ * Códigos de saída: ver `main` (0 completo; 4 emitido mas incompleto; 2 não emitido; 3 recusado).
  */
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { EXPECTED_PROJECT, assertAggregateOnly, firestoreSource, renderMarkdown, runInventory } from './reader.mjs'
+import { EXPECTED_PROJECT, assertAggregateOnly, firestoreSource, renderMarkdown, runInventory, safeErrorCode } from './reader.mjs'
 
 const SERVICE_ACCOUNT_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@sigorsc-testes\.iam\.gserviceaccount\.com$/
 
@@ -61,8 +61,23 @@ function argValue(argv, name) {
   return i >= 0 ? argv[i + 1] : undefined
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env) {
-  const config = validateConfig(env)
+/** Conexão real: carregada só depois da validação; credencial = SOMENTE o arquivo federado validado. */
+async function connectFirestore(projectId) {
+  const { initializeApp, applicationDefault } = await import('firebase-admin/app')
+  const { getFirestore, FieldPath } = await import('firebase-admin/firestore')
+  const app = initializeApp({ credential: applicationDefault(), projectId }, 'inv-uxpt-01-readonly')
+  return firestoreSource(getFirestore(app), FieldPath.documentId())
+}
+
+/**
+ * Códigos de saída: 0 = relatório emitido, consultas completas e aritmética consistente (anomalias nos
+ * dados são ACHADOS, não falhas); 4 = relatório emitido, porém parcial/falho/inconsistente; 2 = nenhum
+ * relatório emitido (erro ou vazamento detectado); 3 = configuração recusada (nenhum acesso feito).
+ */
+export async function main(argv = process.argv.slice(2), env = process.env, deps = {}) {
+  const readFile = deps.readFile ?? ((p) => readFileSync(p, 'utf8'))
+  const connect = deps.connect ?? connectFirestore
+  const config = validateConfig(env, readFile)
   if (!config.ok) {
     console.error(`[INV-UXPT-01] execução recusada: ${config.reason}`)
     return 3
@@ -72,32 +87,31 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     console.error('[INV-UXPT-01] execução recusada: out-directory-missing')
     return 3
   }
-  // Carregado só depois da validação. Credencial: SOMENTE o arquivo federado validado acima.
-  const { initializeApp, applicationDefault } = await import('firebase-admin/app')
-  const { getFirestore, FieldPath } = await import('firebase-admin/firestore')
-  const app = initializeApp({ credential: applicationDefault(), projectId: config.projectId }, 'inv-uxpt-01-readonly')
-  const db = getFirestore(app)
-  const { report, secrets } = await runInventory(firestoreSource(db, FieldPath.documentId()))
-  const json = JSON.stringify(report, null, 2)
+  const source = await connect(config.projectId)
+  const { report, secrets } = await runInventory(source, deps.inventoryOptions)
   const markdown = renderMarkdown(report)
-  // Falha fechada: se houver qualquer identificador ou e-mail, nada é emitido.
-  assertAggregateOnly(json, secrets)
-  assertAggregateOnly(markdown, secrets)
-  secrets.length = 0
+  // Falha fechada: estrutura fora do vocabulário, identificador ou e-mail → nada é emitido.
+  try {
+    assertAggregateOnly(report, markdown, secrets)
+  } finally {
+    secrets.length = 0
+  }
+  const json = JSON.stringify(report, null, 2)
   const dir = resolve(out)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'report.json'), `${json}\n`, { flag: 'wx' })
+  // Markdown primeiro; o JSON (resultado canônico) por último.
   writeFileSync(join(dir, 'report.md'), `${markdown}\n`, { flag: 'wx' })
+  writeFileSync(join(dir, 'report.json'), `${json}\n`, { flag: 'wx' })
   console.log(markdown)
-  return report.status === 'complete' && report.totalsConsistent === true ? 0 : 2
+  return report.status === 'complete' && report.arithmeticConsistent === true ? 0 : 4
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().then(
     (code) => process.exit(code),
     (error) => {
-      // Sem detalhes que possam conter caminhos ou identificadores.
-      console.error(`[INV-UXPT-01] falha: ${error && typeof error === 'object' && 'code' in error ? String(error.code) : error instanceof Error ? error.name : 'unknown'}`)
+      // Somente códigos seguros (gRPC numérico ou internos fixos); nunca mensagens de terceiros.
+      console.error(`[INV-UXPT-01] falha: ${safeErrorCode(error)}`)
       process.exit(2)
     },
   )

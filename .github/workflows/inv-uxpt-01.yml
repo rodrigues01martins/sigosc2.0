@@ -80,6 +80,8 @@ jobs:
           [ "$(git rev-list --parents -n 1 HEAD | wc -w)" = "2" ] || fail "commit de disparo deve ter exatamente um pai (sem merge)"
           [ "$(git rev-parse HEAD^)" = "$APPROVED_BASE" ] || fail "o commit de disparo nao parte do commit revisado"
           [ "$(git diff --name-only HEAD^ HEAD)" = "ops/inventory/trigger.txt" ] || fail "o commit de disparo altera outros arquivos"
+          if [ ! -f ops/inventory/trigger.txt ] || [ -L ops/inventory/trigger.txt ]; then fail "o arquivo de disparo deve existir como arquivo comum (exclusao nao dispara)"; fi
+          [ "$(wc -c < ops/inventory/trigger.txt)" -le 1024 ] || fail "arquivo de disparo acima de 1 KB"
           echo "Commit de disparo validado."
 
   inventory:
@@ -110,6 +112,7 @@ jobs:
           [ "$(git rev-parse HEAD)" = "$SHA" ]
           [ "$(git rev-parse HEAD^)" = "$APPROVED_BASE" ]
           [ "$(git diff --name-only HEAD^ HEAD)" = "ops/inventory/trigger.txt" ]
+          [ -f ops/inventory/trigger.txt ] && [ ! -L ops/inventory/trigger.txt ]
 
       - name: Node.js compativel com o projeto
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -120,11 +123,14 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Testes offline do inventario (antes de qualquer autenticacao)
+        env:
+          # Na execucao real o arquivo de disparo existe; o teste INV-T14 passa a exigir sua presenca.
+          INV_UXPT_TRIGGER_RUN: 'true'
         run: node --test scripts/inventory/*.test.mjs
 
       - name: Autenticacao federada (Workload Identity Federation, sem chave)
         id: auth
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0 (runtime node24)
         with:
           workload_identity_provider: ${{ vars.INV_UXPT_WIF_PROVIDER }}
           service_account: ${{ vars.INV_UXPT_SERVICE_ACCOUNT }}
@@ -132,21 +138,39 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
+      # Codigos do script: 0 completo; 4 emitido mas parcial/inconsistente; 2 nao emitido; 3 configuracao recusada.
       - name: Inventario agregado (somente leitura)
+        id: inventory
         env:
           INV_UXPT_PROJECT: ${{ vars.INV_UXPT_PROJECT }}
           INV_UXPT_SERVICE_ACCOUNT: ${{ vars.INV_UXPT_SERVICE_ACCOUNT }}
-        run: node scripts/inventory/uxpt-legacy-readonly.mjs --out "$RUNNER_TEMP/inv-uxpt-01"
+        run: |
+          set +e
+          node scripts/inventory/uxpt-legacy-readonly.mjs --out "$RUNNER_TEMP/inv-uxpt-01"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" = "0" ] || [ "$rc" = "4" ]; then echo "emitted=true" >> "$GITHUB_OUTPUT"; fi
+          exit 0
 
       - name: Conferir conteudo do artefato (somente os dois relatorios agregados)
+        if: steps.inventory.outputs.emitted == 'true'
         run: |
           set -euo pipefail
-          [ "$(ls -1 "$RUNNER_TEMP/inv-uxpt-01" | sort | tr '\n' ' ')" = "report.json report.md " ]
+          [ "$(find "$RUNNER_TEMP/inv-uxpt-01" -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = "report.json report.md " ]
 
-      - name: Publicar relatorio agregado (retencao curta)
+      - name: Publicar relatorio agregado, inclusive parcial (retencao curta)
+        if: steps.inventory.outputs.emitted == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: inv-uxpt-01-aggregate
           path: ${{ runner.temp }}/inv-uxpt-01/
           if-no-files-found: error
           retention-days: 3
+
+      - name: Resultado (falha se o inventario nao for completo)
+        if: always()
+        env:
+          RC: ${{ steps.inventory.outputs.rc }}
+        run: |
+          set -euo pipefail
+          [ "$RC" = "0" ] || { echo "::error::inventario nao completo ou nao emitido (codigo ${RC:-ausente})"; exit 1; }
